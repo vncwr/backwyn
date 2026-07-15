@@ -1,8 +1,4 @@
-// package artifact turns a stored backup back into a plaintext dump: fetch,
-// decrypt, verify checksum. shared by verify and restore.
-//
-// both verify and restore drive this, so the recovery path an outage depends on
-// is the same code exercised on every verify cycle.
+// package artifact converts a stored backup back into a plaintext dump.
 package artifact
 
 import (
@@ -19,7 +15,7 @@ import (
 	"github.com/vncwr/backwyn/internal/storage"
 )
 
-// Stage identifies which step of materialization failed.
+// stage identifies the failed step of materialization.
 type Stage string
 
 const (
@@ -29,7 +25,7 @@ const (
 	StageWrite    Stage = "write"
 )
 
-// StageError wraps a failure with the stage it occurred in.
+// stageerror wraps an error with the step where it failed.
 type StageError struct {
 	Stage Stage
 	Err   error
@@ -42,7 +38,7 @@ func stageErr(s Stage, format string, args ...any) *StageError {
 	return &StageError{Stage: s, Err: fmt.Errorf(format, args...)}
 }
 
-// StageOf reports the stage of err, or "" if err is not a StageError.
+// stageof returns the stage of err.
 func StageOf(err error) Stage {
 	var se *StageError
 	if errors.As(err, &se) {
@@ -51,8 +47,7 @@ func StageOf(err error) Stage {
 	return ""
 }
 
-// Materialize streams m's artifact from store, decrypts it to dst, and checks
-// the plaintext sha256. on any error dst is untrustworthy: discard it.
+// materialize streams, decrypts, and checks the sha256 checksum of an artifact.
 func Materialize(ctx context.Context, store storage.Backend, m *manifest.Manifest, key []byte, dst io.Writer) error {
 	rc, err := store.Get(ctx, m.ArtifactKey)
 	if err != nil {
@@ -72,8 +67,7 @@ func Materialize(ctx context.Context, store storage.Backend, m *manifest.Manifes
 	return nil
 }
 
-// MaterializeTemp materializes m into a temp file. caller must always invoke
-// cleanup. on failure the file is removed, never left to look like a good dump.
+// materializetemp materializes the backup into a temporary file.
 func MaterializeTemp(ctx context.Context, store storage.Backend, m *manifest.Manifest, key []byte) (path string, cleanup func(), err error) {
 	tmp, err := os.CreateTemp("", "backwyn-"+m.ID+"-*.pgc")
 	if err != nil {
@@ -81,6 +75,7 @@ func MaterializeTemp(ctx context.Context, store storage.Backend, m *manifest.Man
 	}
 	tmpPath := tmp.Name()
 	discard := func() {
+		// clean up on error.
 		tmp.Close()
 		os.Remove(tmpPath)
 	}
@@ -96,7 +91,7 @@ func MaterializeTemp(ctx context.Context, store storage.Backend, m *manifest.Man
 	return tmpPath, func() { os.Remove(tmpPath) }, nil
 }
 
-// Load reads the manifest for id from store.
+// load reads a manifest from storage.
 func Load(ctx context.Context, store storage.Backend, id string) (*manifest.Manifest, error) {
 	rc, err := store.Get(ctx, manifest.ManifestKey(id))
 	if err != nil {
@@ -106,8 +101,7 @@ func Load(ctx context.Context, store storage.Backend, id string) (*manifest.Mani
 	return manifest.Decode(rc)
 }
 
-// LoadAll reads every manifest. one unreadable manifest fails the whole call:
-// a silently skipped manifest would understate coverage and retention.
+// loadall reads all manifests from storage.
 func LoadAll(ctx context.Context, store storage.Backend) ([]*manifest.Manifest, error) {
 	keys, err := store.List(ctx, "manifests/")
 	if err != nil {
@@ -129,7 +123,7 @@ func LoadAll(ctx context.Context, store storage.Backend) ([]*manifest.Manifest, 
 	return ms, nil
 }
 
-// Save writes m's manifest back to store.
+// save writes a manifest back to storage.
 func Save(ctx context.Context, store storage.Backend, m *manifest.Manifest) error {
 	pr, pw := io.Pipe()
 	go func() {

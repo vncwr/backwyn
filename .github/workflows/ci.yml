@@ -82,7 +82,7 @@ jobs:
 
       - name: Run end-to-end self-test
         env:
-          PGHOST: localhost
+          PGHOST: 127.0.0.1
           PGPORT: '5432'
           PGUSER: postgres
           PGPASSWORD: postgres

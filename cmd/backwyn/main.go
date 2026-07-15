@@ -1,7 +1,5 @@
-// command backwyn proves Postgres backups restore, and alerts when none does.
-//
-// run `backwyn` with no arguments for usage. Configuration is read from the
-// environment; see internal/config.
+// backwyn proves postgres backups restore and alerts when they don't.
+// run with no arguments for usage; config is read from the environment.
 package main
 
 import (
@@ -34,7 +32,12 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	if err := run(os.Args[1], os.Args[2:]); err != nil {
+	cmd := os.Args[1]
+	if cmd == "help" || cmd == "-h" || cmd == "--help" {
+		usage()
+		os.Exit(0)
+	}
+	if err := run(cmd, os.Args[2:]); err != nil {
 		fmt.Fprintf(os.Stderr, "backwyn: %v\n", err)
 		os.Exit(1)
 	}
@@ -130,9 +133,7 @@ func runRestore(ctx context.Context, cfg *config.Config, store storage.Backend, 
 	force := fs.Bool("force", false, "allow a non-empty target, the source database, or overwriting -to-file")
 	allowUnverified := fs.Bool("allow-unverified", false, "restore a backup that has not passed verification")
 
-	// flag.Parse stops at the first non-flag argument, so a leading backup id
-	// would silently swallow the flags after it. Accept the id on either side
-	// of the flags: "restore <id> -to x" and "restore -to x <id>" both work.
+	// accept id on either side of flags: flag.Parse stops at the first non-flag arg.
 	var id string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		id, args = args[0], args[1:]
@@ -188,8 +189,7 @@ func runPrune(ctx context.Context, store storage.Backend, args []string) error {
 	}
 	plan := retention.Compute(ms, *pol, time.Now())
 
-	// always show the reasoning. a prune the operator cannot audit is a prune
-	// they cannot trust.
+	// always show decisions so the operator can audit the plan.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ACTION\tID\tCREATED\tVERIFIED\tREASON")
 	for _, d := range plan.Decisions {
@@ -233,7 +233,7 @@ func runPrune(ctx context.Context, store storage.Backend, args []string) error {
 	return nil
 }
 
-// retentionFlags registers the retention policy flags on fs.
+// retentionFlags adds retention flags to fs.
 func retentionFlags(fs *flag.FlagSet) *retention.Policy {
 	var p retention.Policy
 	fs.IntVar(&p.KeepLast, "keep-last", 0, "keep the N most recent verified backups")

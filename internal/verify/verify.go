@@ -1,9 +1,4 @@
-// package verify proves a stored backup is restorable, not merely present:
-// materialize, confirm the archive parses, restore into a throwaway database,
-// count tables, record the outcome on the manifest.
-//
-// materialization is shared with internal/restore, so the recovery path an
-// outage depends on runs every cycle.
+// package verify verifies a stored backup is restorable.
 package verify
 
 import (
@@ -18,9 +13,7 @@ import (
 	"github.com/vncwr/backwyn/internal/storage"
 )
 
-// Run verifies the backup identified by id and rewrites its manifest. failures
-// are reported via Verification.Error and a non-nil error, never by silently
-// leaving Verified false.
+// run verifies a backup and updates its manifest.
 func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id string, now time.Time) (*manifest.Manifest, error) {
 	if err := pgtools.Require("pg_restore", "psql"); err != nil {
 		return nil, err
@@ -34,20 +27,19 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id stri
 		return nil, err
 	}
 
-	// reset state for this attempt.
+	// reset state.
 	m.Verification = manifest.Verification{}
 
 	fail := func(format string, args ...any) (*manifest.Manifest, error) {
 		m.Verification.Error = fmt.Sprintf(format, args...)
 		m.Verification.Verified = false
-		_ = artifact.Save(ctx, store, m) // persist so check/alerting sees it
+		_ = artifact.Save(ctx, store, m) // persist results
 		return m, fmt.Errorf("verification failed: %s", m.Verification.Error)
 	}
 
 	tmpPath, cleanup, err := artifact.MaterializeTemp(ctx, store, m, cfg.EncryptionKey)
 	if err != nil {
-		// a write failure is a local environment problem, not evidence about
-		// the backup; don't brand the backup bad for it.
+		// a write error is a local environment issue, not a bad backup.
 		if artifact.StageOf(err) == artifact.StageWrite {
 			return nil, err
 		}
@@ -56,19 +48,19 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id stri
 	defer cleanup()
 	m.Verification.ChecksumOK = true
 
-	// structural: the archive must parse.
+	// verify the archive is listable.
 	if _, err := pgtools.RestoreList(ctx, tmpPath); err != nil {
 		return fail("pg_restore --list: %v", err)
 	}
 	m.Verification.Listable = true
 
-	// functional: restore into a throwaway database and count tables.
+	// restore and count tables.
 	scratchDB := "backwyn_verify_" + id
 	if err := pgtools.CreateDatabase(ctx, cfg.VerifyAdminDSN, scratchDB); err != nil {
 		return fail("create scratch db: %v", err)
 	}
 	defer func() {
-		// best-effort; a leaked scratch db is noisy but not fatal.
+		// best-effort cleanup.
 		_ = pgtools.DropDatabase(context.WithoutCancel(ctx), cfg.VerifyAdminDSN, scratchDB)
 	}()
 
@@ -76,7 +68,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id stri
 	if err != nil {
 		return fail("derive target dsn: %v", err)
 	}
-	// scratch db was just created, so there is nothing to clean.
+	// scratch db is empty, no clean needed.
 	if err := pgtools.Restore(ctx, targetDSN, tmpPath, pgtools.RestoreOptions{}); err != nil {
 		return fail("restore into scratch db: %v", err)
 	}

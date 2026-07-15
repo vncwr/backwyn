@@ -1,8 +1,4 @@
-// package check implements absence-alerting: alert when no verified backup
-// exists within a freshness window, not just when something errors.
-//
-// a job that silently stops produces no error. the only signal is the growing
-// age of the last good backup.
+// package check checks that a verified backup exists within a freshness window.
 package check
 
 import (
@@ -16,39 +12,36 @@ import (
 	"github.com/vncwr/backwyn/internal/storage"
 )
 
-// Report is the outcome of an absence check.
+// report is the outcome of a check.
 type Report struct {
 	Now    time.Time
 	MaxAge time.Duration
 
-	// LastVerified is the most recent backup that passed verification, or nil.
+	// last verified backup.
 	LastVerified    *manifest.Manifest
 	LastVerifiedAge time.Duration
 
-	// LatestBackup is the most recent backup regardless of verification state.
+	// most recent backup.
 	LatestBackup *manifest.Manifest
 
-	// Healthy is true when a verified backup exists within MaxAge.
+	// healthy is true if a verified backup exists within maxage.
 	Healthy bool
 
-	// Reasons explains why Healthy is false (empty when healthy).
+	// reasons healthy is false.
 	Reasons []string
 
-	// Warnings do not mean coverage lapsed: mainly a latest backup that failed
-	// while an older one still covers the window. callers must report these even
-	// when healthy, or a broken latest backup goes unnoticed until it's an outage.
+	// warnings for non-critical issues.
 	Warnings []string
 }
 
-// Run evaluates all manifests against the freshness window. now and maxAge are
-// injected so the check is deterministic.
+// run evaluates all manifests.
 func Run(ctx context.Context, store storage.Backend, maxAge time.Duration, now time.Time) (*Report, error) {
 	manifests, err := artifact.LoadAll(ctx, store)
 	if err != nil {
 		return nil, err
 	}
 
-	// newest first by snapshot time.
+	// sort by creation time.
 	sort.Slice(manifests, func(i, j int) bool {
 		return manifests[i].CreatedAt.After(manifests[j].CreatedAt)
 	})
@@ -76,8 +69,7 @@ func Run(ctx context.Context, store storage.Backend, maxAge time.Duration, now t
 				roundDur(rep.LastVerifiedAge), maxAge))
 	}
 
-	// a warning, not a reason: older coverage may still be within the window, so
-	// this does not make the report unhealthy — but it must never be swallowed.
+	// warn if the newest backup is not verified.
 	if rep.LatestBackup != nil && !rep.LatestBackup.Verification.Verified {
 		note := rep.LatestBackup.Verification.Error
 		if note == "" {

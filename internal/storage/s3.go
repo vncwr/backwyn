@@ -12,14 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// S3 is an S3-compatible backend (AWS S3, Cloudflare R2, MinIO, ...).
+// s3 is an s3-compatible backend.
 type S3 struct {
 	client   *s3.Client
 	uploader *manager.Uploader
 	bucket   string
 }
 
-// S3Options configures an S3 backend.
+// s3options configures an s3 backend.
 type S3Options struct {
 	Bucket    string
 	Endpoint  string
@@ -29,8 +29,7 @@ type S3Options struct {
 	PathStyle bool
 }
 
-// NewS3 constructs an S3 backend. Uploads stream via multipart, so large
-// dumps are never buffered wholesale in memory.
+// news3 constructs an s3 backend.
 func NewS3(opts S3Options) (*S3, error) {
 	if opts.Bucket == "" {
 		return nil, fmt.Errorf("s3: bucket is required")
@@ -44,8 +43,7 @@ func NewS3(opts S3Options) (*S3, error) {
 		Region:       region,
 		Credentials:  credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""),
 		UsePathStyle: opts.PathStyle,
-		// newer SDKs default to trailing CRC checksums, which R2 and many
-		// S3-compatible servers reject. only send them when required.
+		// avoid trailing checksums which some backends reject.
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	}
@@ -61,7 +59,7 @@ func NewS3(opts S3Options) (*S3, error) {
 	}, nil
 }
 
-// Put streams r to key via multipart upload.
+// put streams r to key.
 func (s *S3) Put(ctx context.Context, key string, r io.Reader) error {
 	_, err := s.uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
@@ -74,7 +72,7 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader) error {
 	return nil
 }
 
-// Get opens key for reading. The caller must Close the returned reader.
+// get opens key for reading.
 func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
@@ -86,7 +84,7 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-// List returns keys under prefix, sorted.
+// list returns sorted keys under prefix.
 func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 	p := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
@@ -108,7 +106,7 @@ func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
 	return keys, nil
 }
 
-// Delete removes key. S3 DeleteObject is already idempotent.
+// delete removes key.
 func (s *S3) Delete(ctx context.Context, key string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
@@ -120,7 +118,7 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// Stat returns the size in bytes of key.
+// stat returns key size.
 func (s *S3) Stat(ctx context.Context, key string) (int64, error) {
 	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),

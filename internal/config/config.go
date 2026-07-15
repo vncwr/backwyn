@@ -1,7 +1,5 @@
-// package config loads engine configuration from environment variables.
-//
-// secrets come from the environment only: flags leak into process listings and
-// shell history.
+// package config loads configuration from environment variables.
+// secrets are read from the environment to avoid leaking in flags.
 package config
 
 import (
@@ -10,7 +8,7 @@ import (
 	"os"
 )
 
-// Backend selects where artifacts and manifests are stored.
+// backend selects where artifacts and manifests are stored.
 type Backend string
 
 const (
@@ -18,43 +16,38 @@ const (
 	BackendS3    Backend = "s3"
 )
 
-// Config is the fully-resolved engine configuration for a single run.
+// config is the resolved configuration for a run.
 type Config struct {
-	// SourceDSN is the connection string of the database being backed up.
-	// should point at a least-privilege role, never the owner/superuser.
+	// source database connection string.
 	SourceDSN string
 
-	// EncryptionKey is a 32-byte key used for AES-256-GCM. Loaded from a
-	// base64-encoded env var so raw key bytes never sit in shell history.
+	// encryption key for aes-256-gcm.
 	EncryptionKey []byte
 
-	// VerifyAdminDSN is an admin connection used to create and drop the
-	// throwaway databases that backups are test-restored into. This should
-	// be a LOCAL Postgres (the verify sandbox), not the production source.
+	// verifyadmindsn is the sandbox postgres admin dsn to test restores.
 	VerifyAdminDSN string
 
-	// Backend selects the storage implementation.
+	// storage backend selection.
 	Backend Backend
 
-	// StorageDir is the local filesystem backend root (Backend == local).
+	// local filesystem directory root.
 	StorageDir string
 
-	// S3 holds the object-storage backend config (Backend == s3). This is how
-	// off-provider / bring-your-own-bucket copies are configured.
+	// s3 backend configuration.
 	S3 S3Config
 
-	// AlertWebhook receives JSON on failure/unhealthy coverage. empty disables it.
+	// optional alert webhook url.
 	AlertWebhook string
 }
 
-// S3Config configures an S3-compatible backend (AWS S3, Cloudflare R2, ...).
+// s3config configures s3 storage.
 type S3Config struct {
 	Bucket    string
-	Endpoint  string // e.g. https://<account>.r2.cloudflarestorage.com; empty = AWS default
-	Region    string // R2 uses "auto"
+	Endpoint  string // s3 endpoint url; empty for aws default
+	Region    string // bucket region
 	AccessKey string
 	SecretKey string
-	PathStyle bool // R2 and most S3-compatible fakes want path-style addressing
+	PathStyle bool // use path-style addressing
 }
 
 // Load reads and validates configuration from the environment.

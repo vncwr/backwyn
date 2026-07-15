@@ -1,8 +1,6 @@
-// package crypto provides streaming aes-256-gcm for backup artifacts, so
-// plaintext dumps never leave the machine unencrypted.
-//
+// package crypto provides streaming aes-256-gcm encryption.
 // format: 4-byte magic, then frames of [uint32 len][12-byte nonce][ciphertext].
-// a zero-length frame terminates the stream. fresh random nonce per frame.
+// a zero-length frame terminates the stream.
 package crypto
 
 import (
@@ -14,14 +12,12 @@ import (
 	"io"
 )
 
-// exported so the out-of-package tests can assert on frame boundaries.
+// exported for testing.
 const (
 	ChunkSize = 64 * 1024
 	NonceSize = 12
 
-	// MagicBytes identifies a backwyn artifact. trailing digit is the format
-	// version; bump it if the frame layout changes so old readers reject new
-	// artifacts loudly. changing it orphans every artifact already written.
+	// magic bytes identifying a backwyn artifact.
 	MagicBytes = "BWY1"
 )
 
@@ -36,7 +32,7 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// Encrypt reads plaintext from src and writes the framed ciphertext to dst.
+// encrypt reads plaintext and writes framed ciphertext.
 func Encrypt(dst io.Writer, src io.Reader, key []byte) error {
 	aead, err := newAEAD(key)
 	if err != nil {
@@ -76,7 +72,7 @@ func Encrypt(dst io.Writer, src io.Reader, key []byte) error {
 		}
 	}
 
-	// zero-length terminator frame.
+	// terminator frame.
 	var term [4]byte
 	if _, err := dst.Write(term[:]); err != nil {
 		return fmt.Errorf("write terminator: %w", err)
@@ -84,11 +80,7 @@ func Encrypt(dst io.Writer, src io.Reader, key []byte) error {
 	return nil
 }
 
-// Decrypt reads framed ciphertext from src and writes plaintext to dst.
-//
-// streams, so on error dst may already hold output — possibly byte-complete: a
-// stream missing only its terminator yields every byte before truncation is
-// caught. gate on the error, not on how much was written.
+// decrypt reads framed ciphertext and writes plaintext.
 func Decrypt(dst io.Writer, src io.Reader, key []byte) error {
 	aead, err := newAEAD(key)
 	if err != nil {
@@ -110,7 +102,7 @@ func Decrypt(dst io.Writer, src io.Reader, key []byte) error {
 		}
 		frameLen := binary.BigEndian.Uint32(lenHdr[:])
 		if frameLen == 0 {
-			return nil // terminator
+			return nil // terminator frame
 		}
 
 		nonce := make([]byte, NonceSize)

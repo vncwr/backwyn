@@ -1,5 +1,4 @@
-// package storage abstracts where backup artifacts and manifests live.
-// Backend is small so new implementations need no pipeline changes.
+// package storage abstracts where artifacts and manifests are stored.
 package storage
 
 import (
@@ -12,23 +11,23 @@ import (
 	"strings"
 )
 
-// Backend is a content-addressable-ish object store keyed by string paths.
+// backend is an object store.
 type Backend interface {
 	Put(ctx context.Context, key string, r io.Reader) error
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
 	List(ctx context.Context, prefix string) ([]string, error)
 	Stat(ctx context.Context, key string) (size int64, err error)
 
-	// Delete removes key. a missing key is not an error, so pruning is idempotent.
+	// delete removes key. missing keys return no error.
 	Delete(ctx context.Context, key string) error
 }
 
-// Local is a filesystem-backed store rooted at Dir.
+// local is a filesystem-backed store.
 type Local struct {
 	Dir string
 }
 
-// NewLocal returns a Local backend, creating the root directory if needed.
+// newlocal returns a local backend.
 func NewLocal(dir string) (*Local, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create storage dir: %w", err)
@@ -40,7 +39,7 @@ func (l *Local) path(key string) string {
 	return filepath.Join(l.Dir, filepath.FromSlash(key))
 }
 
-// Put writes r to key via temp file + rename: readers never see a partial write.
+// put writes r to key via temp file and rename.
 func (l *Local) Put(ctx context.Context, key string, r io.Reader) error {
 	dst := l.path(key)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
@@ -63,12 +62,12 @@ func (l *Local) Put(ctx context.Context, key string, r io.Reader) error {
 	return os.Rename(tmpName, dst)
 }
 
-// Get opens key for reading.
+// get opens key for reading.
 func (l *Local) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return os.Open(l.path(key))
 }
 
-// List returns keys (slash-separated, relative to Dir) under prefix, sorted.
+// list returns sorted keys under prefix.
 func (l *Local) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 	err := filepath.Walk(l.Dir, func(p string, info os.FileInfo, err error) error {
@@ -95,7 +94,7 @@ func (l *Local) List(ctx context.Context, prefix string) ([]string, error) {
 	return keys, nil
 }
 
-// Delete removes key, treating an already-absent key as success.
+// delete removes key.
 func (l *Local) Delete(ctx context.Context, key string) error {
 	if err := os.Remove(l.path(key)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete %s: %w", key, err)
@@ -103,7 +102,7 @@ func (l *Local) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// Stat returns the size in bytes of key.
+// stat returns key size in bytes.
 func (l *Local) Stat(ctx context.Context, key string) (int64, error) {
 	info, err := os.Stat(l.path(key))
 	if err != nil {

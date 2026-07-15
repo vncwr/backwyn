@@ -1,8 +1,5 @@
-// package backup runs the pipeline:
-//
-//	pg_dump -> sha256 -> encrypt(aes-256-gcm) -> store -> manifest
-//
-// manifest is written last, so its existence implies a complete artifact.
+// package backup runs the backup pipeline: pg_dump -> sha256 -> encrypt -> store -> manifest.
+// manifest is written last so it represents a completed backup.
 package backup
 
 import (
@@ -21,13 +18,12 @@ import (
 	"github.com/vncwr/backwyn/internal/storage"
 )
 
-// Result summarizes a completed backup.
+// result summarizes a backup.
 type Result struct {
 	Manifest *manifest.Manifest
 }
 
-// Run performs a single backup. now is injected so callers control the
-// timestamp (and tests are deterministic).
+// run performs a single backup.
 func Run(ctx context.Context, cfg *config.Config, store storage.Backend, now time.Time) (*Result, error) {
 	if err := pgtools.Require("pg_dump"); err != nil {
 		return nil, err
@@ -58,7 +54,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, now tim
 		return nil, err
 	}
 
-	// encrypt into the storage backend, counting encrypted bytes.
+	// encrypt into storage and count bytes.
 	in, err := os.Open(tmpPath)
 	if err != nil {
 		return nil, fmt.Errorf("open dump for encryption: %w", err)
@@ -75,7 +71,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, now tim
 		return nil, fmt.Errorf("store encrypted artifact: %w", err)
 	}
 
-	// manifest last: its existence implies a fully-uploaded artifact.
+	// write manifest last so its existence implies completion.
 	m := &manifest.Manifest{
 		SchemaVersion:   1,
 		ID:              id,
@@ -116,7 +112,7 @@ func hashFile(path string) ([]byte, int64, error) {
 	return h.Sum(nil), n, nil
 }
 
-// countingReader counts bytes read through it.
+// countingreader counts bytes read.
 type countingReader struct {
 	r io.Reader
 	n int64

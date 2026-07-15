@@ -1,5 +1,4 @@
-// package pgtools wraps the postgres client binaries the engine shells out to.
-// every exec.Command lives here.
+// package pgtools wraps postgres client binaries.
 package pgtools
 
 import (
@@ -12,7 +11,7 @@ import (
 	"strings"
 )
 
-// Require checks the named binaries are on PATH, listing any that are missing.
+// require checks that the named binaries exist on PATH.
 func Require(bins ...string) error {
 	var missing []string
 	for _, b := range bins {
@@ -26,7 +25,7 @@ func Require(bins ...string) error {
 	return nil
 }
 
-// Version returns the version string reported by a client binary.
+// version returns the version string for a binary.
 func Version(ctx context.Context, bin string) (string, error) {
 	out, err := exec.CommandContext(ctx, bin, "--version").Output()
 	if err != nil {
@@ -35,8 +34,7 @@ func Version(ctx context.Context, bin string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// Dump runs pg_dump in custom format against dsn, writing to outPath. Custom
-// format is compressed and restorable selectively.
+// dump runs pg_dump in custom format against dsn.
 func Dump(ctx context.Context, dsn, outPath string) error {
 	cmd := exec.CommandContext(ctx, "pg_dump",
 		"--format=custom",
@@ -53,8 +51,7 @@ func Dump(ctx context.Context, dsn, outPath string) error {
 	return nil
 }
 
-// RestoreList runs pg_restore --list to confirm the header and TOC parse. A
-// cheap structural check that catches truncation without a live server.
+// restorelist runs pg_restore --list to verify the archive parses.
 func RestoreList(ctx context.Context, archivePath string) (string, error) {
 	cmd := exec.CommandContext(ctx, "pg_restore", "--list", archivePath)
 	var stdout, stderr bytes.Buffer
@@ -66,25 +63,24 @@ func RestoreList(ctx context.Context, archivePath string) (string, error) {
 	return stdout.String(), nil
 }
 
-// CreateDatabase creates a database named name using adminDSN.
+// createdatabase creates a database.
 func CreateDatabase(ctx context.Context, adminDSN, name string) error {
-	// caller validates identifiers; quote defensively regardless.
+	// quote defensively.
 	return psqlExec(ctx, adminDSN, fmt.Sprintf("CREATE DATABASE %s", quoteIdent(name)))
 }
 
-// DropDatabase drops name if it exists, terminating other connections first.
+// dropdatabase drops a database.
 func DropDatabase(ctx context.Context, adminDSN, name string) error {
 	return psqlExec(ctx, adminDSN, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", quoteIdent(name)))
 }
 
-// RestoreOptions tunes a restore.
+// restoreoptions configures a restore.
 type RestoreOptions struct {
-	// Clean drops each object before recreating it (--clean --if-exists).
-	// required for a non-empty target, or pg_restore collides on duplicate keys.
+	// clean drops objects before recreating them.
 	Clean bool
 }
 
-// Restore restores archivePath into the database addressed by targetDSN.
+// restore restores archivePath into targetDSN.
 func Restore(ctx context.Context, targetDSN, archivePath string, opts RestoreOptions) error {
 	args := []string{"--no-owner", "--no-privileges"}
 	if opts.Clean {
@@ -101,8 +97,7 @@ func Restore(ctx context.Context, targetDSN, archivePath string, opts RestoreOpt
 	return nil
 }
 
-// CountUserTables returns the number of tables in non-system schemas: a sanity
-// signal that a restore actually has content.
+// countusertables returns the number of user tables.
 func CountUserTables(ctx context.Context, dsn string) (int, error) {
 	const q = "SELECT count(*) FROM information_schema.tables " +
 		"WHERE table_type = 'BASE TABLE' " +
@@ -139,13 +134,12 @@ func psqlQuery(ctx context.Context, dsn, sql string) (string, error) {
 	return stdout.String(), nil
 }
 
-// quoteIdent quotes a Postgres identifier by doubling embedded quotes.
+// quoteident double quotes identifiers.
 func quoteIdent(id string) string {
 	return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
 }
 
-// WithDatabase returns a copy of dsn with its database path replaced by db,
-// reusing the admin connection's host/port/credentials.
+// withdatabase returns a dsn with a replaced database name.
 func WithDatabase(dsn, db string) (string, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
@@ -155,9 +149,7 @@ func WithDatabase(dsn, db string) (string, error) {
 	return u.String(), nil
 }
 
-// SameTarget reports whether two DSNs address the same host:port/database.
-// fails closed: an unparseable DSN returns true rather than allowing a restore
-// over production.
+// sametarget reports whether two dsns address the same host and database.
 func SameTarget(a, b string) bool {
 	ua, erra := url.Parse(a)
 	ub, errb := url.Parse(b)
@@ -167,8 +159,7 @@ func SameTarget(a, b string) bool {
 	return strings.EqualFold(ua.Host, ub.Host) && ua.Path == ub.Path
 }
 
-// SourceLabel returns a credential-stripped host:port/dbname label, safe to
-// record in a manifest.
+// sourcelabel returns a stripped label for the dsn.
 func SourceLabel(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil {

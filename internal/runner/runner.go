@@ -1,5 +1,4 @@
-// package runner performs one cycle: backup, verify, check coverage, prune.
-// the daemon and -once mode drive the same Cycle.
+// package runner performs backup, verify, check coverage, and prune.
 package runner
 
 import (
@@ -19,7 +18,7 @@ import (
 	"github.com/vncwr/backwyn/internal/verify"
 )
 
-// Deps are the collaborators a cycle needs. Now is injected for testability.
+// deps holds collaborators for a cycle.
 type Deps struct {
 	Cfg     *config.Config
 	Store   storage.Backend
@@ -27,13 +26,11 @@ type Deps struct {
 	MaxAge  time.Duration
 	Now     func() time.Time
 
-	// Retention prunes at the end of each cycle. A zero policy keeps everything.
+	// retention policy.
 	Retention retention.Policy
 }
 
-// Cycle runs backup -> verify -> check once. It returns an error if the cycle
-// did not end with healthy, verified coverage. Alerts are emitted as a side
-// effect so a caller looping on a timer needs no extra wiring.
+// cycle runs backup -> verify -> check once.
 func Cycle(ctx context.Context, d Deps) error {
 	now := d.Now()
 
@@ -44,8 +41,7 @@ func Cycle(ctx context.Context, d Deps) error {
 	}
 	log.Printf("backup ok: %s (%d bytes)", res.Manifest.ID, res.Manifest.EncryptedSize)
 
-	// verify.Run persists failures to the manifest before returning, so
-	// absence-alerting still sees them.
+	// verify.Run persists failures to the manifest.
 	m, verr := verify.Run(ctx, d.Cfg, d.Store, res.Manifest.ID, now)
 	if verr != nil {
 		d.emit(ctx, alert.LevelError, "verify failed",
@@ -64,11 +60,10 @@ func Cycle(ctx context.Context, d Deps) error {
 		return fmt.Errorf("coverage unhealthy: %s", detail)
 	}
 
-	// only after coverage is confirmed healthy: never delete on a cycle where
-	// we are unsure the new backup is good.
+	// only prune if coverage is healthy.
 	d.prune(ctx, now)
 
-	// healthy, but coverage holds only because an older backup carries it.
+	// coverage is healthy but relies on an older backup.
 	if len(rep.Warnings) > 0 {
 		detail := strings.Join(rep.Warnings, "; ")
 		log.Printf("cycle healthy with warnings: %s", detail)
@@ -80,8 +75,7 @@ func Cycle(ctx context.Context, d Deps) error {
 	return nil
 }
 
-// prune applies the retention policy. failures are logged and alerted but do
-// not fail the cycle: coverage is already healthy and the cost is storage.
+// prune applies the retention policy.
 func (d Deps) prune(ctx context.Context, now time.Time) {
 	if d.Retention.IsZero() {
 		return

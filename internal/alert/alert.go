@@ -1,5 +1,4 @@
-// package alert delivers notifications when a cycle fails or coverage becomes
-// unhealthy.
+// package alert delivers notifications when a cycle fails or coverage is unhealthy.
 package alert
 
 import (
@@ -11,17 +10,17 @@ import (
 	"time"
 )
 
-// describes the severity of an event
+// level describes event severity.
 type Level string
 
 const (
 	LevelInfo Level = "info"
-	// LevelWarn: not an outage yet, but becomes one if ignored.
+	// warn level.
 	LevelWarn  Level = "warn"
 	LevelError Level = "error"
 )
 
-// a single notification.
+// event is a notification payload.
 type Event struct {
 	Level  Level     `json:"level"`
 	Title  string    `json:"title"`
@@ -29,12 +28,12 @@ type Event struct {
 	Time   time.Time `json:"time"`
 }
 
-// delivers events somewhere a human or system will see them
+// alerter sends event notifications.
 type Alerter interface {
 	Alert(ctx context.Context, e Event) error
 }
 
-// returns a Webhook alerter if url is non-empty, otherwise a no-op.
+// new returns a webhook alerter if url is set, otherwise a noop.
 func New(webhookURL string) Alerter {
 	if webhookURL == "" {
 		return Noop{}
@@ -42,13 +41,13 @@ func New(webhookURL string) Alerter {
 	return &Webhook{URL: webhookURL, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
-// discards events (used when no alerting is configured).
+// noop discards events.
 type Noop struct{}
 
-// implements Alerter.
+// alert implements alerter.
 func (Noop) Alert(context.Context, Event) error { return nil }
 
-// POSTs events as JSON to a URL (Slack-compatible incoming webhooks, a custom endpoint, etc.)
+// webhook posts events as json to a url.
 type Webhook struct {
 	URL    string
 	client *http.Client

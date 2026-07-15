@@ -1,8 +1,4 @@
-// package restore delivers a stored backup back to the operator: to a plain
-// pg_dump archive (ToFile), or into a target database (TargetDSN).
-//
-// every guard defaults to refusing. this runs when production is down and
-// someone is in a hurry.
+// package restore restores backups to a database or a file.
 package restore
 
 import (
@@ -18,26 +14,26 @@ import (
 	"github.com/vncwr/backwyn/internal/storage"
 )
 
-// Options controls a restore. TargetDSN and ToFile are mutually exclusive.
+// options configures a restore.
 type Options struct {
 	TargetDSN string
 	ToFile    string
-	// Force permits a non-empty target, the source database, and overwriting ToFile.
+	// force overrides guards.
 	Force bool
-	// AllowUnverified permits restoring a backup that never passed verification.
+	// allowunverified allows restoring unverified backups.
 	AllowUnverified bool
 }
 
-// Result summarizes a completed restore.
+// result summarizes a restore.
 type Result struct {
 	Manifest    *manifest.Manifest
-	Path        string // archive written, in ToFile mode
-	TargetLabel string // credential-stripped target, in database mode
+	Path        string // path to output file
+	TargetLabel string // stripped connection label
 	TableCount  int
 	Duration    time.Duration
 }
 
-// Run restores the backup identified by id according to opts.
+// run restores a backup.
 func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id string, opts Options) (*Result, error) {
 	if opts.TargetDSN == "" && opts.ToFile == "" {
 		return nil, fmt.Errorf("a restore target is required: pass -to <dsn> or -to-file <path>")
@@ -51,7 +47,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id stri
 		return nil, err
 	}
 
-	// guard: an unverified backup has never been proven restorable.
+	// guard: refuse unverified unless allowed.
 	if !m.Verification.Verified && !opts.AllowUnverified {
 		reason := m.Verification.Error
 		if reason == "" {
@@ -79,15 +75,14 @@ func toDatabase(ctx context.Context, cfg *config.Config, store storage.Backend, 
 		return nil, err
 	}
 
-	// guard: never overwrite the database this backup came from.
+	// guard: do not overwrite the source database.
 	if cfg.SourceDSN != "" && pgtools.SameTarget(opts.TargetDSN, cfg.SourceDSN) && !opts.Force {
 		return nil, fmt.Errorf("refusing to restore into the source database %s\n"+
 			"restore into a new database instead, or pass -force if overwriting the source is genuinely what you want",
 			pgtools.SourceLabel(cfg.SourceDSN))
 	}
 
-	// guard: target must be reachable and empty. counting tables doubles as the
-	// connectivity check, so a bad DSN fails here, not halfway through pg_restore.
+	// guard: target database must be empty.
 	existing, err := pgtools.CountUserTables(ctx, opts.TargetDSN)
 	if err != nil {
 		return nil, fmt.Errorf("cannot inspect restore target %s: %w\n"+
@@ -106,8 +101,7 @@ func toDatabase(ctx context.Context, cfg *config.Config, store storage.Backend, 
 	}
 	defer cleanup()
 
-	// restoring over existing objects needs --clean, or pg_restore collides with
-	// them. only clean when something is there; empty targets stay additive.
+	// clean existing database if not empty.
 	if err := pgtools.Restore(ctx, opts.TargetDSN, tmpPath, pgtools.RestoreOptions{
 		Clean: existing > 0,
 	}); err != nil {
@@ -128,7 +122,7 @@ func toDatabase(ctx context.Context, cfg *config.Config, store storage.Backend, 
 }
 
 func materializeToFile(ctx context.Context, store storage.Backend, m *manifest.Manifest, key []byte, path string, force bool) error {
-	// guard: never silently clobber an existing file.
+	// guard: do not overwrite existing file.
 	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	if force {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -143,8 +137,7 @@ func materializeToFile(ctx context.Context, store storage.Backend, m *manifest.M
 
 	if err := artifact.Materialize(ctx, store, m, key, f); err != nil {
 		f.Close()
-		// bytes written are untrustworthy; remove them so nobody restores from
-		// this file believing it is a good dump.
+		// clean up failed file write.
 		os.Remove(path)
 		return fmt.Errorf("restore %s to file: %w", m.ID, err)
 	}

@@ -1,12 +1,8 @@
-// package retention decides which backups to delete, and deletes them.
-//
-// three rules hold regardless of policy:
-//
-//  1. nothing is pruned unless at least one backup is verified
-//  2. the most recent verified backup is never deleted
-//  3. the most recent backup is never deleted; it may be mid-verification
-//
-// an empty Policy prunes nothing. slots are filled by verified backups only.
+// package retention decides which backups to prune.
+// safety guards:
+// 1. do not prune unless at least one backup is verified.
+// 2. never prune the most recent verified backup.
+// 3. never prune the most recent backup.
 package retention
 
 import (
@@ -20,8 +16,7 @@ import (
 	"github.com/vncwr/backwyn/internal/storage"
 )
 
-// Policy is a grandfather-father-son retention policy. Each field keeps the
-// newest verified backup in each of the most recent N periods.
+// policy is a grandfather-father-son retention policy.
 type Policy struct {
 	KeepLast    int
 	KeepDaily   int
@@ -29,26 +24,26 @@ type Policy struct {
 	KeepMonthly int
 }
 
-// IsZero reports whether the policy would keep nothing by rule.
+// iszero reports if the policy is empty.
 func (p Policy) IsZero() bool {
 	return p.KeepLast == 0 && p.KeepDaily == 0 && p.KeepWeekly == 0 && p.KeepMonthly == 0
 }
 
-// Decision records what will happen to one backup and why.
+// decision records prune outcome.
 type Decision struct {
 	Manifest *manifest.Manifest
 	Keep     bool
 	Reason   string
 }
 
-// Plan is the full set of decisions, newest backup first.
+// plan is the set of decisions.
 type Plan struct {
 	Decisions []Decision
-	// Warnings explain why a plan is more conservative than the policy asked.
+	// warnings explain why a plan is conservative.
 	Warnings []string
 }
 
-// Remove returns the manifests the plan would delete.
+// remove returns manifests to delete.
 func (p *Plan) Remove() []*manifest.Manifest {
 	var out []*manifest.Manifest
 	for _, d := range p.Decisions {
@@ -59,7 +54,7 @@ func (p *Plan) Remove() []*manifest.Manifest {
 	return out
 }
 
-// Kept returns the manifests the plan would retain.
+// kept returns manifests to retain.
 func (p *Plan) Kept() []*manifest.Manifest {
 	var out []*manifest.Manifest
 	for _, d := range p.Decisions {
@@ -70,7 +65,7 @@ func (p *Plan) Kept() []*manifest.Manifest {
 	return out
 }
 
-// Bytes returns the encrypted bytes the plan would free.
+// bytes returns total bytes to free.
 func (p *Plan) Bytes() int64 {
 	var n int64
 	for _, m := range p.Remove() {
@@ -79,7 +74,7 @@ func (p *Plan) Bytes() int64 {
 	return n
 }
 
-// Compute builds a prune plan. It never mutates ms and never touches storage.
+// compute builds a prune plan.
 func Compute(ms []*manifest.Manifest, p Policy, now time.Time) *Plan {
 	sorted := make([]*manifest.Manifest, len(ms))
 	copy(sorted, ms)
@@ -103,7 +98,7 @@ func Compute(ms []*manifest.Manifest, p Policy, now time.Time) *Plan {
 		return keepAll("no retention policy configured")
 	}
 
-	// rule 1: never prune while coverage is already broken.
+	// guard 1: do not prune if no verified backup exists.
 	var newestVerified *manifest.Manifest
 	for _, m := range sorted {
 		if m.Verification.Verified {
@@ -124,11 +119,11 @@ func Compute(ms []*manifest.Manifest, p Policy, now time.Time) *Plan {
 		}
 	}
 
-	// rules 2 and 3.
+	// guards 2 and 3.
 	keep(newestVerified, "most recent verified backup (safety net, never pruned)")
 	keep(sorted[0], "most recent backup (may be mid-verification)")
 
-	// policy slots, filled by verified backups only, newest first.
+	// policy slots.
 	var lastDay, lastWeek, lastMonth string
 	var nLast, nDaily, nWeekly, nMonthly int
 	for _, m := range sorted {
@@ -174,17 +169,13 @@ func isoWeek(t time.Time) string {
 	return fmt.Sprintf("%d-W%02d", y, w)
 }
 
-// Apply executes a plan, deleting each manifest before its artifact.
-//
-// order matters: an interrupted prune must leave an invisible orphan (swept
-// later), never a manifest advertising a backup whose bytes are gone.
-// failures are collected, not fatal.
+// apply executes a plan, deleting manifests before artifacts.
 func Apply(ctx context.Context, store storage.Backend, plan *Plan) (freed int64, err error) {
 	var failures []string
 	for _, m := range plan.Remove() {
 		if e := store.Delete(ctx, manifest.ManifestKey(m.ID)); e != nil {
 			failures = append(failures, fmt.Sprintf("%s manifest: %v", m.ID, e))
-			continue // leave the artifact; the manifest still points at it
+			continue // skip deleting artifact if manifest delete failed
 		}
 		if e := store.Delete(ctx, m.ArtifactKey); e != nil {
 			failures = append(failures, fmt.Sprintf("%s artifact: %v (orphaned, sweep will reclaim)", m.ID, e))
@@ -199,8 +190,7 @@ func Apply(ctx context.Context, store storage.Backend, plan *Plan) (freed int64,
 	return freed, nil
 }
 
-// SweepOrphans deletes artifacts with no manifest, older than minAge. the age
-// guard matters: an in-flight backup is indistinguishable from an orphan.
+// sweeporphans deletes artifacts older than minage that have no manifest.
 func SweepOrphans(ctx context.Context, store storage.Backend, minAge time.Duration, now time.Time) (removed int, freed int64, err error) {
 	manifestKeys, err := store.List(ctx, "manifests/")
 	if err != nil {
@@ -223,13 +213,13 @@ func SweepOrphans(ctx context.Context, store storage.Backend, minAge time.Durati
 		if live[id] {
 			continue
 		}
-		// the id is the backup timestamp, so age needs no object metadata.
+		// id is the timestamp, no need for object metadata.
 		created, perr := time.Parse("20060102T150405Z", id)
 		if perr != nil {
-			continue // not a key we wrote; not ours to delete
+			continue // not our file
 		}
 		if now.UTC().Sub(created) < minAge {
-			continue // may be an in-flight backup
+			continue // might be in-flight
 		}
 
 		size, _ := store.Stat(ctx, k)
