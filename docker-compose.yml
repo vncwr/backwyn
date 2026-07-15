@@ -65,8 +65,7 @@ services:
       # --- optional SQL probe against the restored sandbox ---
       BACKWYN_VERIFY_QUERY: ${BACKWYN_VERIFY_QUERY:-}
 
-    # /healthz + /metrics. Bound to localhost so coverage state is scrapeable
-    # from the host without exposing the port to the network.
+    # /healthz + /metrics, host-local only
     ports:
       - "127.0.0.1:8080:8080"
 

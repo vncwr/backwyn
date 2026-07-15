@@ -31,9 +31,8 @@ type Deps struct {
 	Retention retention.Policy
 }
 
-// cycle runs backup -> verify -> check once. check runs even when backup or
-// verify fails: coverage is a property of the stored manifests, not of this
-// cycle, and an older verified backup may still be carrying it.
+// cycle runs backup -> verify -> check once. check runs even when the cycle
+// fails — an older verified backup may still hold coverage.
 func Cycle(ctx context.Context, d Deps) error {
 	now := d.Now()
 
@@ -63,8 +62,7 @@ func Cycle(ctx context.Context, d Deps) error {
 		return fmt.Errorf("coverage unhealthy: %s", detail)
 	}
 
-	// coverage is healthy, but this cycle's backup or verify failed — an older
-	// backup is carrying it. don't prune on a cycle that is unsure of itself.
+	// never prune on a failed cycle.
 	if cycleErr != nil {
 		return cycleErr
 	}
@@ -83,7 +81,7 @@ func Cycle(ctx context.Context, d Deps) error {
 	return nil
 }
 
-// backupAndVerify runs this cycle's backup and verification, recording both.
+// backupandverify runs one backup and its verification.
 func (d Deps) backupAndVerify(ctx context.Context, now time.Time) error {
 	startBackup := time.Now()
 	res, err := backup.Run(ctx, d.Cfg, d.Store, now)

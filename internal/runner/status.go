@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// tracker maintains in-memory state of the last backup, verify, and coverage
-// check, for the observability endpoints.
+// tracker holds in-memory state of the last backup, verify, and check.
 type Tracker struct {
 	mu sync.RWMutex
 
@@ -59,8 +58,7 @@ func (t *Tracker) RecordVerify(success bool, tableCount int) {
 	}
 }
 
-// recordcheck updates coverage state. lastVerified is the creation time of the
-// newest verified backup, zero if none exists.
+// recordcheck updates coverage state. lastVerified is zero when none exists.
 func (t *Tracker) RecordCheck(healthy bool, lastVerified time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -69,14 +67,9 @@ func (t *Tracker) RecordCheck(healthy bool, lastVerified time.Time) {
 	t.lastVerifiedBackup = lastVerified
 }
 
-// Handler returns the observability endpoints. Separate from StartServer so
-// tests exercise the same handlers production serves.
-//
-// /healthz answers the coverage question, not "did the last job error": 200
-// only when the last check found a verified backup within -max-age. Before the
-// first cycle completes it reports 503 "starting" — a fresh daemon has proven
-// nothing yet, and claiming health before the first check would let a
-// crash-looping container look permanently healthy.
+// handler returns the observability endpoints. /healthz is 200 only when the
+// last check found a verified backup within -max-age; before the first check
+// it is 503 "starting", because nothing is proven yet.
 func Handler(tracker *Tracker) http.Handler {
 	mux := http.NewServeMux()
 

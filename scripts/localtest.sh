@@ -114,8 +114,7 @@ log "[5.5/14] verify query failure (should fail verification)"
 BACKWYN_VERIFY_QUERY="SELECT count(*) FROM non_existent_table;" "$BIN" verify "$ID" >/dev/null 2>&1
 check "$([ $? -ne 0 ] && echo 0 || echo 1)" "failed verification query fails verify"
 
-# the failed verify above re-stamped the manifest UNVERIFIED; re-verify with
-# the good query so the rest of the suite sees a verified backup again.
+# the failed verify stamped the manifest unverified; re-verify to undo that
 "$BIN" verify "$ID" >/dev/null
 check $? "re-verify with a passing query restores verified status"
 

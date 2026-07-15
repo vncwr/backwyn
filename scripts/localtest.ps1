@@ -105,8 +105,7 @@ try {
   Check ($LASTEXITCODE -ne 0) "failed verification query fails verify"
   $env:BACKWYN_VERIFY_QUERY = "SELECT count(*) FROM customers;"
 
-  # the failed verify re-stamped the manifest UNVERIFIED; re-verify with the
-  # good query so the rest of the suite sees a verified backup again.
+  # the failed verify stamped the manifest unverified; re-verify to undo that
   & $backwyn verify $id
   Check ($LASTEXITCODE -eq 0) "re-verify with a passing query restores verified status"
 

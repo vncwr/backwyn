@@ -27,21 +27,18 @@ func TestHealthzFollowsCoverage(t *testing.T) {
 	tracker := NewTracker()
 	h := Handler(tracker)
 
-	// before the first check: not healthy — nothing is proven yet.
 	code, body := get(t, h, "/healthz")
 	if code != http.StatusServiceUnavailable || body != "starting" {
 		t.Errorf("before first check: got %d %q, want 503 starting", code, body)
 	}
 
-	// a healthy coverage check turns it ok.
 	tracker.RecordCheck(true, time.Now())
 	code, body = get(t, h, "/healthz")
 	if code != http.StatusOK || body != "ok" {
 		t.Errorf("healthy coverage: got %d %q, want 200 ok", code, body)
 	}
 
-	// this cycle's backup failing does NOT flip health while coverage holds:
-	// an older verified backup is still carrying it.
+	// a failed cycle must not flip health while coverage holds.
 	tracker.RecordBackup(false, 0, time.Second)
 	tracker.RecordVerify(false, 0)
 	code, body = get(t, h, "/healthz")
@@ -49,7 +46,6 @@ func TestHealthzFollowsCoverage(t *testing.T) {
 		t.Errorf("failed cycle, healthy coverage: got %d %q, want 200 ok", code, body)
 	}
 
-	// coverage going stale is what flips health.
 	tracker.RecordCheck(false, time.Now().Add(-48*time.Hour))
 	code, body = get(t, h, "/healthz")
 	if code != http.StatusServiceUnavailable || body != "unhealthy" {
@@ -61,7 +57,7 @@ func TestMetricsExposeCoverageAndCycleState(t *testing.T) {
 	tracker := NewTracker()
 	h := Handler(tracker)
 
-	// before anything runs, gauges must exist and read zero, not be absent.
+	// gauges must exist and read zero before anything runs, not be absent.
 	_, body := get(t, h, "/metrics")
 	for _, want := range []string{
 		"backwyn_coverage_healthy 0",
@@ -97,7 +93,6 @@ func TestMetricsExposeCoverageAndCycleState(t *testing.T) {
 		}
 	}
 
-	// a failed verify with stale coverage reads 0 across the board.
 	tracker.RecordVerify(false, 0)
 	tracker.RecordCheck(false, verified)
 	_, body = get(t, h, "/metrics")
