@@ -1,0 +1,75 @@
+# Run backwyn against your database with one command:
+#
+#   cp .env.example .env    # fill in BACKWYN_SOURCE_DSN + key + bucket
+#   docker compose up
+#
+# Two containers, because verification needs somewhere to restore into:
+#
+#   verify-sandbox  a throwaway PostgreSQL that exists only to prove backups
+#                   restore. Nothing of yours lives here — backwyn creates a
+#                   scratch database per verify and drops it after. It is not
+#                   exposed outside the compose network.
+#   backwyn        the engine: backup -> verify -> check -> prune, on a timer.
+#
+# The sandbox's major version must be >= your source database's, or pg_restore
+# refuses the archive. postgres:17 covers Supabase, Neon, and PlanetScale today.
+
+services:
+  verify-sandbox:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: sandbox
+    # No ports: — the sandbox is reachable only from backwyn, never the host.
+    tmpfs:
+      # Scratch restores are disposable by definition; keeping them in RAM makes
+      # verification faster and leaves nothing on disk. Drop this (and add a
+      # volume) if your database is larger than the RAM you want to spend.
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backwyn:
+    build: .
+    # Or pin a release instead of building:
+    # image: ghcr.io/vncwr/backwyn:latest
+    depends_on:
+      verify-sandbox:
+        condition: service_healthy
+    environment:
+      # --- your database (read-only role — see sql/backup_role.sql) ---
+      BACKWYN_SOURCE_DSN: ${BACKWYN_SOURCE_DSN:?set BACKWYN_SOURCE_DSN in .env}
+
+      # --- encryption: base64 of 32 random bytes, stored OUTSIDE this repo ---
+      # Lose this key and every backup is unrecoverable. It is the one secret
+      # that must never live in the same place as the artifacts.
+      BACKWYN_ENCRYPTION_KEY: ${BACKWYN_ENCRYPTION_KEY:?set BACKWYN_ENCRYPTION_KEY in .env}
+
+      # --- the verify sandbox (the sidecar above, not your database) ---
+      BACKWYN_VERIFY_ADMIN_DSN: postgresql://postgres:sandbox@verify-sandbox:5432/postgres?sslmode=disable
+
+      # --- where artifacts go: your bucket, your account ---
+      BACKWYN_STORAGE: ${BACKWYN_STORAGE:-s3}
+      BACKWYN_S3_BUCKET: ${BACKWYN_S3_BUCKET:-}
+      BACKWYN_S3_ENDPOINT: ${BACKWYN_S3_ENDPOINT:-}
+      BACKWYN_S3_REGION: ${BACKWYN_S3_REGION:-auto}
+      BACKWYN_S3_ACCESS_KEY: ${BACKWYN_S3_ACCESS_KEY:-}
+      BACKWYN_S3_SECRET_KEY: ${BACKWYN_S3_SECRET_KEY:-}
+      BACKWYN_S3_PATH_STYLE: ${BACKWYN_S3_PATH_STYLE:-true}
+
+      # --- alerting: where "you have no good backup" goes ---
+      BACKWYN_ALERT_WEBHOOK: ${BACKWYN_ALERT_WEBHOOK:-}
+
+    command:
+      - run
+      - -interval=${BACKWYN_INTERVAL:-6h}
+      - -max-age=${BACKWYN_MAX_AGE:-24h}
+      - -keep-daily=${BACKWYN_KEEP_DAILY:-14}
+      - -keep-monthly=${BACKWYN_KEEP_MONTHLY:-12}
+
+    restart: unless-stopped
+    tmpfs:
+      # Dumps are staged here before encryption. Must fit one plaintext dump.
+      - /tmp
