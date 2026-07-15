@@ -31,10 +31,60 @@ type Deps struct {
 	Retention retention.Policy
 }
 
-// cycle runs backup -> verify -> check once.
+// cycle runs backup -> verify -> check once. check runs even when backup or
+// verify fails: coverage is a property of the stored manifests, not of this
+// cycle, and an older verified backup may still be carrying it.
 func Cycle(ctx context.Context, d Deps) error {
 	now := d.Now()
 
+	cycleErr := d.backupAndVerify(ctx, now)
+
+	rep, err := check.Run(ctx, d.Store, d.MaxAge, now)
+	if err != nil {
+		if cycleErr != nil {
+			return cycleErr
+		}
+		return fmt.Errorf("check: %w", err)
+	}
+	if d.Tracker != nil {
+		var lastVerified time.Time
+		if rep.LastVerified != nil {
+			lastVerified = rep.LastVerified.CreatedAt
+		}
+		d.Tracker.RecordCheck(rep.Healthy, lastVerified)
+	}
+
+	if !rep.Healthy {
+		detail := strings.Join(rep.Reasons, "; ")
+		d.emit(ctx, alert.LevelError, "backup coverage unhealthy", detail, now)
+		if cycleErr != nil {
+			return cycleErr
+		}
+		return fmt.Errorf("coverage unhealthy: %s", detail)
+	}
+
+	// coverage is healthy, but this cycle's backup or verify failed — an older
+	// backup is carrying it. don't prune on a cycle that is unsure of itself.
+	if cycleErr != nil {
+		return cycleErr
+	}
+
+	d.prune(ctx, now)
+
+	// coverage is healthy but relies on an older backup.
+	if len(rep.Warnings) > 0 {
+		detail := strings.Join(rep.Warnings, "; ")
+		slog.Warn("cycle healthy with warnings", "warnings", detail)
+		d.emit(ctx, alert.LevelWarn, "backup coverage degraded", detail, now)
+		return nil
+	}
+
+	slog.Info("cycle healthy", "max_age", d.MaxAge)
+	return nil
+}
+
+// backupAndVerify runs this cycle's backup and verification, recording both.
+func (d Deps) backupAndVerify(ctx context.Context, now time.Time) error {
 	startBackup := time.Now()
 	res, err := backup.Run(ctx, d.Cfg, d.Store, now)
 	if err != nil {
@@ -63,29 +113,6 @@ func Cycle(ctx context.Context, d Deps) error {
 		d.Tracker.RecordVerify(true, m.Verification.TableCount)
 	}
 	slog.Info("verify ok", "id", m.ID, "table_count", m.Verification.TableCount)
-
-	rep, err := check.Run(ctx, d.Store, d.MaxAge, now)
-	if err != nil {
-		return fmt.Errorf("check: %w", err)
-	}
-	if !rep.Healthy {
-		detail := strings.Join(rep.Reasons, "; ")
-		d.emit(ctx, alert.LevelError, "backup coverage unhealthy", detail, now)
-		return fmt.Errorf("coverage unhealthy: %s", detail)
-	}
-
-	// only prune if coverage is healthy.
-	d.prune(ctx, now)
-
-	// coverage is healthy but relies on an older backup.
-	if len(rep.Warnings) > 0 {
-		detail := strings.Join(rep.Warnings, "; ")
-		slog.Warn("cycle healthy with warnings", "warnings", detail)
-		d.emit(ctx, alert.LevelWarn, "backup coverage degraded", detail, now)
-		return nil
-	}
-
-	slog.Info("cycle healthy", "max_age", d.MaxAge)
 	return nil
 }
 

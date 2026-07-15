@@ -396,9 +396,11 @@ usage:
                             deletes the most recent verified backup, and prunes
                             nothing at all if no backup is verified. With no
                             -keep flags it keeps everything.
-  backwyn run [-interval 6h] [-max-age 24h] [-once] [-keep-* N]
+  backwyn run [-interval 6h] [-max-age 24h] [-once] [-listen :8080] [-keep-* N]
                             daemon: backup -> verify -> check -> prune on a
-                            schedule (-once runs a single cycle, for cron)
+                            schedule (-once runs a single cycle, for cron).
+                            Serves /healthz and /metrics on -listen ("" to
+                            disable; skipped with -once).
 
 environment:
   BACKWYN_SOURCE_DSN        source database connection string
@@ -412,5 +414,8 @@ environment:
   BACKWYN_S3_ACCESS_KEY     S3 access key id
   BACKWYN_S3_SECRET_KEY     S3 secret access key
   BACKWYN_S3_PATH_STYLE     "true" for path-style addressing (R2, MinIO)
-  BACKWYN_ALERT_WEBHOOK     optional URL to POST JSON alerts to`)
+  BACKWYN_ALERT_WEBHOOK     optional URL to POST JSON alerts to
+  BACKWYN_VERIFY_QUERY      optional SQL run against the restored sandbox; if
+                            it errors, verification fails
+  BACKWYN_LISTEN_ADDR       default for run -listen (health checks + metrics)`)
 }

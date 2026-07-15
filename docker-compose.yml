@@ -62,6 +62,14 @@ services:
       # --- alerting: where "you have no good backup" goes ---
       BACKWYN_ALERT_WEBHOOK: ${BACKWYN_ALERT_WEBHOOK:-}
 
+      # --- optional SQL probe against the restored sandbox ---
+      BACKWYN_VERIFY_QUERY: ${BACKWYN_VERIFY_QUERY:-}
+
+    # /healthz + /metrics. Bound to localhost so coverage state is scrapeable
+    # from the host without exposing the port to the network.
+    ports:
+      - "127.0.0.1:8080:8080"
+
     command:
       - run
       - -interval=${BACKWYN_INTERVAL:-6h}

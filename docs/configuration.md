@@ -38,6 +38,22 @@ per verify (`backwyn_verify_<id>`) and drops it afterward, so the role needs
 Its major version must be **>=** the source's, or `pg_restore` refuses the
 archive. `docker-compose.yml` runs one as a sidecar with no exposed ports.
 
+### Verify query
+
+| Variable | Description |
+|---|---|
+| `BACKWYN_VERIFY_QUERY` | Optional SQL executed against the restored sandbox. If it errors, verification fails. |
+
+The built-in table count proves the archive restores; a verify query proves the
+restored data is *yours*. Point it at something that must exist:
+
+```
+BACKWYN_VERIFY_QUERY=SELECT count(*) FROM customers;
+```
+
+A restore that comes back without your most important table is not a backup,
+even if `pg_restore` exits 0.
+
 ## Storage
 
 | Variable | Default | Description |
@@ -83,12 +99,23 @@ is still healthy but the *most recent* backup failed verification — an older
 backup is carrying you. Do not route `warn` to a channel nobody reads; left
 alone it becomes an outage.
 
+## Observability server
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKWYN_LISTEN_ADDR` | `:8080` | Default for `run -listen`. The flag wins when both are set. |
+
+The daemon serves `/healthz` and `/metrics` (Prometheus text format). Set
+`-listen ""` to disable. `run -once` never listens — a cron invocation has
+nothing to scrape. See [operations.md](operations.md#monitoring) for the
+endpoint semantics.
+
 ## Flags
 
 Configuration is environment-only; schedule and policy are flags.
 
 ```
-backwyn run [-interval 6h] [-max-age 24h] [-once]
+backwyn run [-interval 6h] [-max-age 24h] [-once] [-listen :8080]
             [-keep-last N] [-keep-daily N] [-keep-weekly N] [-keep-monthly N]
 
 backwyn check [-max-age 24h]
@@ -103,6 +130,7 @@ backwyn restore <id> (-to <dsn> | -to-file <path>) [-force] [-allow-unverified]
 | `-interval` | `6h` | Time between cycles |
 | `-max-age` | `24h` | Alert if no verified backup is newer than this |
 | `-once` | `false` | Run a single cycle and exit (for cron) |
+| `-listen` | `:8080` | Address for `/healthz` + `/metrics`; `""` disables |
 | `-keep-last` | `0` | Keep the N most recent verified backups |
 | `-keep-daily` | `0` | Keep the newest verified backup from each of the last N days |
 | `-keep-weekly` | `0` | ...each of the last N ISO weeks |

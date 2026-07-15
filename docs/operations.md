@@ -46,6 +46,38 @@ Also handle `warn`-level webhook events. They mean coverage is healthy but the
 newest backup failed verification: an older backup is carrying you, and nobody
 has noticed yet.
 
+### HTTP endpoints (daemon only)
+
+The daemon serves two endpoints on `-listen` (default `:8080`):
+
+**`/healthz`** answers the coverage question, not "did the last job error".
+It returns 200 only when the last check found a verified backup within
+`-max-age`. Before the first cycle completes it returns 503 `starting` — a
+fresh daemon has proven nothing yet. A verify can take minutes on a large
+database, so give startup probes headroom rather than pointing a restart
+policy straight at this endpoint.
+
+**`/metrics`** is Prometheus text format. The one to alert on:
+
+```
+backwyn_last_verified_backup_time_seconds
+```
+
+the epoch timestamp of the newest *verified* backup (0 if none). The alert
+rule that matches `check -max-age 24h`:
+
+```
+time() - backwyn_last_verified_backup_time_seconds > 86400
+```
+
+`backwyn_coverage_healthy` is the same judgment precomputed. The rest
+(`backwyn_last_backup_*`, `backwyn_last_verify_*`) describe the most recent
+cycle — useful for dashboards, but a failed cycle is not an emergency while
+coverage holds; that distinction is exactly why the coverage gauges exist.
+
+The endpoints hold no secrets, but there is no reason to expose them publicly;
+keep the port internal to your network.
+
 ## Restore runbook
 
 **Production is down and you need data back.**

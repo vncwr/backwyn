@@ -4,109 +4,110 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestTrackerAndEndpoints(t *testing.T) {
-	tracker := NewTracker()
-
-	// 1. Initial State (starting)
-	req := httptest.NewRequest("GET", "/healthz", nil)
+func get(t *testing.T, h http.Handler, path string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
 	w := httptest.NewRecorder()
-	
-	// Create multiplexer and register handlers as defined in StartServer
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		tracker.mu.RLock()
-		defer tracker.mu.RUnlock()
-		if tracker.lastBackupTime.IsZero() {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("starting"))
-			return
-		}
-		if tracker.lastBackupStatus == "success" && tracker.lastVerifyStatus == "success" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok"))
-			return
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("unhealthy"))
-	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		tracker.mu.RLock()
-		defer tracker.mu.RUnlock()
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte("mock_metrics"))
-	})
-
-	mux.ServeHTTP(w, req)
+	h.ServeHTTP(w, req)
 	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "starting" {
-		t.Errorf("expected starting, got %q", string(body))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
+	return resp.StatusCode, string(body)
+}
+
+func TestHealthzFollowsCoverage(t *testing.T) {
+	tracker := NewTracker()
+	h := Handler(tracker)
+
+	// before the first check: not healthy — nothing is proven yet.
+	code, body := get(t, h, "/healthz")
+	if code != http.StatusServiceUnavailable || body != "starting" {
+		t.Errorf("before first check: got %d %q, want 503 starting", code, body)
 	}
 
-	// 2. Successful Backup and Verify
-	tracker.RecordBackup(true, 1024, 2*time.Second)
-	tracker.RecordVerify(true, 15)
-
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	resp = w.Result()
-	body, _ = io.ReadAll(resp.Body)
-	if string(body) != "ok" {
-		t.Errorf("expected ok, got %q", string(body))
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
+	// a healthy coverage check turns it ok.
+	tracker.RecordCheck(true, time.Now())
+	code, body = get(t, h, "/healthz")
+	if code != http.StatusOK || body != "ok" {
+		t.Errorf("healthy coverage: got %d %q, want 200 ok", code, body)
 	}
 
-	// 3. Failed Backup
-	tracker.RecordBackup(false, 0, 500*time.Millisecond)
-
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	resp = w.Result()
-	body, _ = io.ReadAll(resp.Body)
-	if string(body) != "unhealthy" {
-		t.Errorf("expected unhealthy, got %q", string(body))
+	// this cycle's backup failing does NOT flip health while coverage holds:
+	// an older verified backup is still carrying it.
+	tracker.RecordBackup(false, 0, time.Second)
+	tracker.RecordVerify(false, 0)
+	code, body = get(t, h, "/healthz")
+	if code != http.StatusOK || body != "ok" {
+		t.Errorf("failed cycle, healthy coverage: got %d %q, want 200 ok", code, body)
 	}
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("expected 503, got %d", resp.StatusCode)
+
+	// coverage going stale is what flips health.
+	tracker.RecordCheck(false, time.Now().Add(-48*time.Hour))
+	code, body = get(t, h, "/healthz")
+	if code != http.StatusServiceUnavailable || body != "unhealthy" {
+		t.Errorf("unhealthy coverage: got %d %q, want 503 unhealthy", code, body)
 	}
 }
 
-func TestMetricsEndpointValues(t *testing.T) {
+func TestMetricsExposeCoverageAndCycleState(t *testing.T) {
 	tracker := NewTracker()
+	h := Handler(tracker)
+
+	// before anything runs, gauges must exist and read zero, not be absent.
+	_, body := get(t, h, "/metrics")
+	for _, want := range []string{
+		"backwyn_coverage_healthy 0",
+		"backwyn_last_verified_backup_time_seconds 0",
+		"backwyn_last_check_time_seconds 0",
+		"backwyn_last_backup_time_seconds 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("initial metrics missing %q", want)
+		}
+	}
+
+	verified := time.Now().Add(-2 * time.Hour)
 	tracker.RecordBackup(true, 54321, 1500*time.Millisecond)
 	tracker.RecordVerify(true, 42)
+	tracker.RecordCheck(true, verified)
 
-	// Construct mux for metrics endpoint manually using the same logic
-	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		tracker.mu.RLock()
-		defer tracker.mu.RUnlock()
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte("backwyn_last_backup_size_bytes 54321\n"))
-		_, _ = w.Write([]byte("backwyn_last_table_count 42\n"))
-	})
-
-	req := httptest.NewRequest("GET", "/metrics", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-
-	output := string(body)
-	if !strings.Contains(output, "backwyn_last_backup_size_bytes 54321") {
-		t.Errorf("expected metric value 54321, got %q", output)
+	code, body := get(t, h, "/metrics")
+	if code != http.StatusOK {
+		t.Fatalf("metrics status: got %d, want 200", code)
 	}
-	if !strings.Contains(output, "backwyn_last_table_count 42") {
-		t.Errorf("expected metric value 42, got %q", output)
+	for _, want := range []string{
+		"backwyn_coverage_healthy 1",
+		"backwyn_last_verified_backup_time_seconds " + strconv.FormatInt(verified.Unix(), 10),
+		"backwyn_last_backup_size_bytes 54321",
+		"backwyn_last_backup_duration_seconds 1.500",
+		"backwyn_last_backup_success 1",
+		"backwyn_last_verify_success 1",
+		"backwyn_last_table_count 42",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics missing %q\ngot:\n%s", want, body)
+		}
+	}
+
+	// a failed verify with stale coverage reads 0 across the board.
+	tracker.RecordVerify(false, 0)
+	tracker.RecordCheck(false, verified)
+	_, body = get(t, h, "/metrics")
+	for _, want := range []string{
+		"backwyn_coverage_healthy 0",
+		"backwyn_last_verify_success 0",
+		"backwyn_last_table_count 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("after failure, metrics missing %q", want)
+		}
 	}
 }
