@@ -99,6 +99,7 @@ export BACKWYN_SOURCE_DSN="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/sour
 export BACKWYN_VERIFY_ADMIN_DSN="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/postgres?sslmode=disable"
 export BACKWYN_STORAGE_DIR="$STORE"
 export BACKWYN_ENCRYPTION_KEY="$(head -c32 /dev/urandom | base64)"
+export BACKWYN_VERIFY_QUERY="SELECT count(*) FROM customers;"
 
 log "[4/14] backup"
 OUT="$("$BIN" backup)"; RC=$?
@@ -108,6 +109,10 @@ check "$([ $RC -eq 0 ] && [ -n "$ID" ] && echo 0 || echo 1)" "backup created ($I
 
 log "[5/14] verify (clean backup should VERIFY)"
 "$BIN" verify "$ID"; check $? "clean backup verified"
+
+log "[5.5/14] verify query failure (should fail verification)"
+BACKWYN_VERIFY_QUERY="SELECT count(*) FROM non_existent_table;" "$BIN" verify "$ID" >/dev/null 2>&1
+check "$([ $? -ne 0 ] && echo 0 || echo 1)" "failed verification query fails verify"
 
 log "[6/14] check -max-age 24h (should be OK / exit 0)"
 "$BIN" check -max-age 24h; check $? "coverage healthy when a fresh verified backup exists"

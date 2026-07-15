@@ -134,6 +134,11 @@ func psqlQuery(ctx context.Context, dsn, sql string) (string, error) {
 	return stdout.String(), nil
 }
 
+// RunQuery executes query against dsn and returns the output.
+func RunQuery(ctx context.Context, dsn, query string) (string, error) {
+	return psqlQuery(ctx, dsn, query)
+}
+
 // quoteident double quotes identifiers.
 func quoteIdent(id string) string {
 	return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`

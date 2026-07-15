@@ -27,4 +27,4 @@ coverage.*
 .DS_Store
 Thumbs.db
 
-README.md
+/notes/

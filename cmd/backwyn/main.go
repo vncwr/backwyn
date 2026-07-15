@@ -6,9 +6,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -28,6 +29,9 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	cleanupTempFiles()
+
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -40,6 +44,24 @@ func main() {
 	if err := run(cmd, os.Args[2:]); err != nil {
 		fmt.Fprintf(os.Stderr, "backwyn: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func cleanupTempFiles() {
+	dir := os.TempDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "backwyn-") && strings.HasSuffix(name, ".pgc") {
+			path := filepath.Join(dir, name)
+			_ = os.Remove(path)
+		}
 	}
 }
 
@@ -248,9 +270,19 @@ func runDaemon(cfg *config.Config, store storage.Backend, args []string) error {
 	interval := fs.Duration("interval", 6*time.Hour, "time between backup cycles")
 	maxAge := fs.Duration("max-age", 24*time.Hour, "alert if no verified backup is newer than this")
 	once := fs.Bool("once", false, "run a single cycle and exit (for external cron)")
+	defaultListen := os.Getenv("BACKWYN_LISTEN_ADDR")
+	if defaultListen == "" {
+		defaultListen = ":8080"
+	}
+	listen := fs.String("listen", defaultListen, "address to listen on for health checks and metrics")
 	pol := retentionFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	tracker := runner.NewTracker()
+	if *listen != "" && !*once {
+		runner.StartServer(*listen, tracker)
 	}
 
 	deps := runner.Deps{
@@ -260,6 +292,7 @@ func runDaemon(cfg *config.Config, store storage.Backend, args []string) error {
 		MaxAge:    *maxAge,
 		Now:       time.Now,
 		Retention: *pol,
+		Tracker:   tracker,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -269,10 +302,10 @@ func runDaemon(cfg *config.Config, store storage.Backend, args []string) error {
 		return runner.Cycle(ctx, deps)
 	}
 
-	log.Printf("backwyn daemon: cycle every %s, alert if coverage older than %s", *interval, *maxAge)
+	slog.Info("backwyn daemon started", "interval", *interval, "max_age", *maxAge)
 
 	if err := runner.Cycle(ctx, deps); err != nil {
-		log.Printf("cycle error: %v", err)
+		slog.Error("cycle error", "err", err)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -280,11 +313,11 @@ func runDaemon(cfg *config.Config, store storage.Backend, args []string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("shutting down: %v", ctx.Err())
+			slog.Info("shutting down", "reason", ctx.Err())
 			return nil
 		case <-ticker.C:
 			if err := runner.Cycle(ctx, deps); err != nil {
-				log.Printf("cycle error: %v", err)
+				slog.Error("cycle error", "err", err)
 			}
 		}
 	}

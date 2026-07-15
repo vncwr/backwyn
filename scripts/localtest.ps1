@@ -86,6 +86,7 @@ try {
   $b = New-Object byte[] 32
   [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
   $env:BACKWYN_ENCRYPTION_KEY = [Convert]::ToBase64String($b)
+  $env:BACKWYN_VERIFY_QUERY = "SELECT count(*) FROM customers;"
   $env:Path = "$pgbin;$env:Path"
 
   Write-Host "[4/8] backup"
@@ -97,6 +98,12 @@ try {
   Write-Host "[5/8] verify (clean backup should VERIFY)"
   & $backwyn verify $id
   Check ($LASTEXITCODE -eq 0) "clean backup verified"
+
+  Write-Host "[5.5/8] verify query failure (should fail verification)"
+  $env:BACKWYN_VERIFY_QUERY = "SELECT count(*) FROM non_existent_table;"
+  & $backwyn verify $id
+  Check ($LASTEXITCODE -ne 0) "failed verification query fails verify"
+  $env:BACKWYN_VERIFY_QUERY = "SELECT count(*) FROM customers;"
 
   Write-Host "[6/8] check -max-age 24h (should be OK / exit 0)"
   & $backwyn check -max-age 24h

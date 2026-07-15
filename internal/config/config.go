@@ -38,6 +38,9 @@ type Config struct {
 
 	// optional alert webhook url.
 	AlertWebhook string
+
+	// optional verify SQL query to execute on restore validation.
+	VerifyQuery string
 }
 
 // s3config configures s3 storage.
@@ -66,6 +69,7 @@ func Load() (*Config, error) {
 			PathStyle: os.Getenv("BACKWYN_S3_PATH_STYLE") == "true",
 		},
 		AlertWebhook: os.Getenv("BACKWYN_ALERT_WEBHOOK"),
+		VerifyQuery:  os.Getenv("BACKWYN_VERIFY_QUERY"),
 	}
 
 	if c.SourceDSN == "" {

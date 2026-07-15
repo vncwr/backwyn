@@ -80,6 +80,12 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id stri
 	}
 	m.Verification.TableCount = count
 
+	if cfg.VerifyQuery != "" {
+		if _, err := pgtools.RunQuery(ctx, targetDSN, cfg.VerifyQuery); err != nil {
+			return fail("verify query: %v", err)
+		}
+	}
+
 	m.Verification.Verified = true
 	m.Verification.VerifiedAt = now.UTC()
 	if err := artifact.Save(ctx, store, m); err != nil {
