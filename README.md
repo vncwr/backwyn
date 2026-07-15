@@ -149,9 +149,13 @@ believe it's safe, all of them checkable in this repo:
 
 ## docs
 
+Start with [getting started](docs/getting-started.md) — zero to a verified
+backup, including a restore drill.
+
+- [commands](docs/commands.md) — every command, flag, and exit code
+- [configuration](docs/configuration.md) — every env var
+- [operations](docs/operations.md) — monitoring, restore runbook, failure modes
 - [architecture](docs/architecture.md) — the cycle, invariants, artifact format
-- [configuration](docs/configuration.md) — every env var, flags, exit codes
-- [operations](docs/operations.md) — running, monitoring, restore runbook
 - [supabase](docs/supabase.md) — connection + least-privilege role
 
 ## tests
