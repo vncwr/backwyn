@@ -114,6 +114,11 @@ log "[5.5/14] verify query failure (should fail verification)"
 BACKWYN_VERIFY_QUERY="SELECT count(*) FROM non_existent_table;" "$BIN" verify "$ID" >/dev/null 2>&1
 check "$([ $? -ne 0 ] && echo 0 || echo 1)" "failed verification query fails verify"
 
+# the failed verify above re-stamped the manifest UNVERIFIED; re-verify with
+# the good query so the rest of the suite sees a verified backup again.
+"$BIN" verify "$ID" >/dev/null
+check $? "re-verify with a passing query restores verified status"
+
 log "[6/14] check -max-age 24h (should be OK / exit 0)"
 "$BIN" check -max-age 24h; check $? "coverage healthy when a fresh verified backup exists"
 
