@@ -73,6 +73,23 @@ tables but not `auth` — a restored copy will not contain user accounts. The
 alternative is keeping the full dump and running a Supabase-compatible verify
 sandbox instead; see [supabase.md](supabase.md#extensions-and-the-verify-sandbox).
 
+### Row-level security
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKWYN_DUMP_ROW_SECURITY` | `false` | Dump RLS tables under the role's policies (`pg_dump --enable-row-security`) instead of requiring `BYPASSRLS`. |
+
+`pg_dump` refuses to dump an RLS-enabled table unless the role can bypass RLS,
+and hosted platforms (Supabase) will not let you grant `BYPASSRLS` to a custom
+role. Setting this dumps under the role's policies instead — which is only a
+complete backup if the role can see every row. Grant it an allow-all read
+policy on every table first: [`sql/backup_role_rls.sql`](../sql/backup_role_rls.sql).
+
+Before every dump, backwyn checks that each in-scope RLS table has such a
+policy and refuses to back up otherwise — a silently partial backup marked
+VERIFIED is worse than a loud failure. A table created later without the
+policy fails the cycle (and alerts) until you re-run the script.
+
 ## Storage
 
 | Variable | Default | Description |

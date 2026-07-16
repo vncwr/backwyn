@@ -9,6 +9,11 @@ Run [`sql/backup_role.sql`](../sql/backup_role.sql) in the Supabase SQL editor
 `backwyn_backup` role that can read everything and change nothing — so the
 connection string you give the engine cannot be used to damage your data.
 
+If your tables use row-level security (on Supabase they should), also run
+[`sql/backup_role_rls.sql`](../sql/backup_role_rls.sql) and set
+`BACKWYN_DUMP_ROW_SECURITY=true` — see
+[Row-level security and pg_dump](#row-level-security-and-pg_dump) below.
+
 ## 2. Pick the RIGHT connection string
 
 Supabase exposes several connection strings. **It matters which one you use:**
@@ -50,12 +55,48 @@ export BACKWYN_S3_ACCESS_KEY=...
 export BACKWYN_S3_SECRET_KEY=...
 export BACKWYN_S3_PATH_STYLE=true
 
+# RLS-enabled tables (after running sql/backup_role_rls.sql — see below).
+export BACKWYN_DUMP_ROW_SECURITY=true
+export BACKWYN_DUMP_SCHEMAS=public
+
 # Optional: get alerted when a cycle fails or coverage goes stale.
+# Slack-style JSON by default; Discord webhook URLs are detected and get a
+# Discord-formatted message.
 export BACKWYN_ALERT_WEBHOOK='https://hooks.slack.com/services/...'
 
 # Run a single cycle (cron), or `backwyn run` as a daemon.
 backwyn run -once -max-age 24h
 ```
+
+## Row-level security and pg_dump
+
+`pg_read_all_data` grants SELECT but does **not** bypass RLS. `pg_dump`
+running as `backwyn_backup` therefore refuses any RLS-enabled table ("query
+would be affected by row-level security policy"), and hosted Supabase will
+not let you grant `BYPASSRLS` to a custom role — only the built-in
+`postgres` role has it.
+
+Two ways out; pick one:
+
+1. **Stay least-privilege (recommended).** Run
+   [`sql/backup_role_rls.sql`](../sql/backup_role_rls.sql) — it gives
+   `backwyn_backup` an allow-all `SELECT` policy on every RLS table in the
+   schemas you dump — then set:
+
+   ```bash
+   export BACKWYN_DUMP_ROW_SECURITY=true   # pg_dump --enable-row-security
+   export BACKWYN_DUMP_SCHEMAS=public      # keep managed schemas (auth, ...) out of scope
+   ```
+
+   backwyn checks coverage before every dump and refuses to run while any
+   in-scope RLS table lacks the policy, so a table added later without it
+   fails the cycle loudly (and alerts) instead of silently backing up zero
+   of its rows. Re-run the script when that happens.
+
+2. **Use the `postgres` role in the DSN.** It has `BYPASSRLS`, so full dumps
+   (including `auth`) work without policies — but the engine then holds a
+   credential that can rewrite your database, which is exactly what
+   `backup_role.sql` exists to avoid.
 
 ## Extensions and the verify sandbox
 

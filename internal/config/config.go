@@ -45,6 +45,11 @@ type Config struct {
 
 	// optional schemas to scope pg_dump to; empty dumps the whole database.
 	DumpSchemas []string
+
+	// dump rls-protected tables under the source role's policies instead of
+	// requiring bypassrls. only safe when every rls table has a read-all
+	// policy for the backup role — see sql/backup_role_rls.sql.
+	DumpRowSecurity bool
 }
 
 // s3config configures s3 storage.
@@ -72,9 +77,10 @@ func Load() (*Config, error) {
 			SecretKey: os.Getenv("BACKWYN_S3_SECRET_KEY"),
 			PathStyle: os.Getenv("BACKWYN_S3_PATH_STYLE") == "true",
 		},
-		AlertWebhook: os.Getenv("BACKWYN_ALERT_WEBHOOK"),
-		VerifyQuery:  os.Getenv("BACKWYN_VERIFY_QUERY"),
-		DumpSchemas:  splitList(os.Getenv("BACKWYN_DUMP_SCHEMAS")),
+		AlertWebhook:    os.Getenv("BACKWYN_ALERT_WEBHOOK"),
+		VerifyQuery:     os.Getenv("BACKWYN_VERIFY_QUERY"),
+		DumpSchemas:     splitList(os.Getenv("BACKWYN_DUMP_SCHEMAS")),
+		DumpRowSecurity: os.Getenv("BACKWYN_DUMP_ROW_SECURITY") == "true",
 	}
 
 	if c.SourceDSN == "" {

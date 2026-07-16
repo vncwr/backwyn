@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -54,7 +56,7 @@ type Webhook struct {
 }
 
 func (w *Webhook) Alert(ctx context.Context, e Event) error {
-	body, err := json.Marshal(e)
+	body, err := json.Marshal(payload(w.URL, e))
 	if err != nil {
 		return err
 	}
@@ -73,4 +75,32 @@ func (w *Webhook) Alert(ctx context.Context, e Event) error {
 		return fmt.Errorf("alert webhook returned %s", resp.Status)
 	}
 	return nil
+}
+
+// payload shapes the event for the webhook's consumer. discord rejects
+// anything but its own message schema, so discord webhooks get a message
+// body; every other url gets the raw event.
+func payload(webhookURL string, e Event) any {
+	if !isDiscord(webhookURL) {
+		return e
+	}
+	content := fmt.Sprintf("**%s** (%s)\n%s", e.Title, e.Level, e.Detail)
+	// discord caps message content at 2000 characters.
+	if r := []rune(content); len(r) > 2000 {
+		content = string(r[:1999]) + "…"
+	}
+	return map[string]string{"content": content}
+}
+
+// isDiscord reports whether the url is a discord webhook endpoint.
+func isDiscord(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "discord.com" && host != "discordapp.com" && !strings.HasSuffix(host, ".discord.com") {
+		return false
+	}
+	return strings.HasPrefix(u.EscapedPath(), "/api/webhooks/")
 }

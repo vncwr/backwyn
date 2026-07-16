@@ -69,7 +69,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, id stri
 		return fail("derive target dsn: %v", err)
 	}
 	// scratch db is empty, no clean needed.
-	if err := pgtools.Restore(ctx, targetDSN, tmpPath, pgtools.RestoreOptions{}); err != nil {
+	if err := pgtools.Restore(ctx, targetDSN, tmpPath, pgtools.RestoreOptions{Sandbox: true}); err != nil {
 		return fail("restore into scratch db: %v", err)
 	}
 	m.Verification.Restored = true

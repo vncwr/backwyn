@@ -419,5 +419,8 @@ environment:
                             it errors, verification fails
   BACKWYN_DUMP_SCHEMAS      optional comma-separated schemas to dump (pg_dump
                             -n); empty dumps the whole database
+  BACKWYN_DUMP_ROW_SECURITY "true" dumps RLS tables under the role's policies
+                            (pg_dump --enable-row-security); requires the
+                            read-all policies from sql/backup_role_rls.sql
   BACKWYN_LISTEN_ADDR       default for run -listen (health checks + metrics)`)
 }

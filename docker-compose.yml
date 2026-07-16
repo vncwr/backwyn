@@ -55,6 +55,9 @@ services:
 
       # --- where artifacts go: your bucket, your account ---
       BACKWYN_STORAGE: ${BACKWYN_STORAGE:-s3}
+      # local backend only: container path, mapped to ./backups on the host
+      # by the volume below.
+      BACKWYN_STORAGE_DIR: ${BACKWYN_STORAGE_DIR:-/backups}
       BACKWYN_S3_BUCKET: ${BACKWYN_S3_BUCKET:-}
       BACKWYN_S3_ENDPOINT: ${BACKWYN_S3_ENDPOINT:-}
       BACKWYN_S3_REGION: ${BACKWYN_S3_REGION:-auto}
@@ -71,6 +74,9 @@ services:
       # --- optional dump scope (see docs/supabase.md before setting) ---
       BACKWYN_DUMP_SCHEMAS: ${BACKWYN_DUMP_SCHEMAS:-}
 
+      # --- RLS sources: needs sql/backup_role_rls.sql (see docs/supabase.md) ---
+      BACKWYN_DUMP_ROW_SECURITY: ${BACKWYN_DUMP_ROW_SECURITY:-}
+
     # /healthz + /metrics, host-local only
     ports:
       - "127.0.0.1:8080:8080"
@@ -83,6 +89,10 @@ services:
       - -keep-monthly=${BACKWYN_KEEP_MONTHLY:-12}
 
     restart: unless-stopped
+    volumes:
+      # Only used when BACKWYN_STORAGE=local: encrypted artifacts land in
+      # ./backups next to this file. Harmless (an empty dir) for s3.
+      - ./backups:/backups
     tmpfs:
       # Dumps are staged here before encryption. Must fit one plaintext dump.
       - /tmp

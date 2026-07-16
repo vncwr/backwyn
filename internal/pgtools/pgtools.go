@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -35,12 +37,18 @@ func Version(ctx context.Context, bin string) (string, error) {
 }
 
 // dumpargs builds the pg_dump argument list. schemas scopes the dump with -n
-// flags; empty means the whole database.
-func DumpArgs(dsn, outPath string, schemas []string) []string {
+// flags; empty means the whole database. rowSecurity dumps rls tables under
+// the role's policies instead of refusing — callers must first prove the
+// role sees every row (see RLSUncoveredTables) or the dump is silently
+// incomplete.
+func DumpArgs(dsn, outPath string, schemas []string, rowSecurity bool) []string {
 	args := []string{
 		"--format=custom",
 		"--no-owner",
 		"--no-privileges",
+	}
+	if rowSecurity {
+		args = append(args, "--enable-row-security")
 	}
 	for _, s := range schemas {
 		if s = strings.TrimSpace(s); s != "" {
@@ -51,14 +59,71 @@ func DumpArgs(dsn, outPath string, schemas []string) []string {
 }
 
 // dump runs pg_dump in custom format against dsn.
-func Dump(ctx context.Context, dsn, outPath string, schemas []string) error {
-	cmd := exec.CommandContext(ctx, "pg_dump", DumpArgs(dsn, outPath, schemas)...)
+func Dump(ctx context.Context, dsn, outPath string, schemas []string, rowSecurity bool) error {
+	cmd := exec.CommandContext(ctx, "pg_dump", DumpArgs(dsn, outPath, schemas, rowSecurity)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("pg_dump failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// rlsuncoveredtables lists rls-enabled tables the connected role cannot
+// provably read in full: tables with no permissive allow-all select policy
+// for the role, or with a restrictive policy that filters it. run as a
+// preflight before dumping with --enable-row-security, where such a table
+// silently dumps only its visible subset. schemas limits the check to the
+// schemas being dumped; empty checks all user schemas.
+func RLSUncoveredTables(ctx context.Context, dsn string, schemas []string) ([]string, error) {
+	scope := ""
+	if clean := cleanIdents(schemas); len(clean) > 0 {
+		lits := make([]string, len(clean))
+		for i, s := range clean {
+			lits[i] = quoteLiteral(s)
+		}
+		scope = "AND n.nspname IN (" + strings.Join(lits, ", ") + ") "
+	}
+	// a policy applies to the connected role when its role list is PUBLIC
+	// (oid 0) or contains a role whose privileges the current role inherits.
+	q := `SELECT n.nspname || '.' || c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p')
+  AND c.relrowsecurity
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema') ` + scope + `
+  AND (
+    NOT EXISTS (
+      SELECT 1 FROM pg_policy p
+      WHERE p.polrelid = c.oid
+        AND p.polpermissive
+        AND p.polcmd IN ('r', '*')
+        AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+        AND (p.polroles = '{0}'::oid[] OR EXISTS (
+          SELECT 1 FROM unnest(p.polroles) r WHERE pg_has_role(current_user, r, 'USAGE')))
+    )
+    OR EXISTS (
+      SELECT 1 FROM pg_policy p
+      WHERE p.polrelid = c.oid
+        AND NOT p.polpermissive
+        AND p.polcmd IN ('r', '*')
+        AND pg_get_expr(p.polqual, p.polrelid) <> 'true'
+        AND (p.polroles = '{0}'::oid[] OR EXISTS (
+          SELECT 1 FROM unnest(p.polroles) r WHERE pg_has_role(current_user, r, 'USAGE')))
+    )
+  )
+ORDER BY 1`
+	out, err := psqlQuery(ctx, dsn, q)
+	if err != nil {
+		return nil, err
+	}
+	var tables []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			tables = append(tables, line)
+		}
+	}
+	return tables, nil
 }
 
 // restorelist runs pg_restore --list to verify the archive parses.
@@ -88,6 +153,11 @@ func DropDatabase(ctx context.Context, adminDSN, name string) error {
 type RestoreOptions struct {
 	// clean drops objects before recreating them.
 	Clean bool
+
+	// sandbox restores into a fresh scratch database: POLICY entries are
+	// skipped (they reference roles that only exist on the source) and the
+	// public schema is not recreated (a fresh database already has one).
+	Sandbox bool
 }
 
 // restore restores archivePath into targetDSN.
@@ -95,6 +165,14 @@ func Restore(ctx context.Context, targetDSN, archivePath string, opts RestoreOpt
 	args := []string{"--no-owner", "--no-privileges"}
 	if opts.Clean {
 		args = append(args, "--clean", "--if-exists")
+	}
+	if opts.Sandbox {
+		listPath, cleanup, err := sandboxTOC(ctx, archivePath)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		args = append(args, "--use-list", listPath)
 	}
 	args = append(args, "--dbname", targetDSN, archivePath)
 
@@ -105,6 +183,46 @@ func Restore(ctx context.Context, targetDSN, archivePath string, opts RestoreOpt
 		return fmt.Errorf("pg_restore failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// toc entries a scratch sandbox cannot satisfy: policies name source-only
+// roles, and a fresh database already owns a public schema.
+var sandboxSkip = regexp.MustCompile(`^\d+; \d+ \d+ (POLICY |SCHEMA - public( |$))`)
+
+// filtersandboxtoc comments out sandbox-unsatisfiable entries in a
+// pg_restore --list toc, preserving the rest verbatim.
+func FilterSandboxTOC(toc string) string {
+	lines := strings.Split(toc, "\n")
+	for i, line := range lines {
+		if sandboxSkip.MatchString(line) {
+			lines[i] = ";" + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// sandboxtoc writes the filtered toc to a temp file for pg_restore --use-list.
+func sandboxTOC(ctx context.Context, archivePath string) (string, func(), error) {
+	toc, err := RestoreList(ctx, archivePath)
+	if err != nil {
+		return "", nil, err
+	}
+	f, err := os.CreateTemp("", "backwyn-toc-*.list")
+	if err != nil {
+		return "", nil, fmt.Errorf("create toc list file: %w", err)
+	}
+	path := f.Name()
+	cleanup := func() { os.Remove(path) }
+	if _, err := f.WriteString(FilterSandboxTOC(toc)); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("write toc list file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close toc list file: %w", err)
+	}
+	return path, cleanup, nil
 }
 
 // countusertables returns the number of user tables.
@@ -152,6 +270,22 @@ func RunQuery(ctx context.Context, dsn, query string) (string, error) {
 // quoteident double quotes identifiers.
 func quoteIdent(id string) string {
 	return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
+}
+
+// quoteliteral single quotes a sql string literal.
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// cleanidents trims entries and drops blanks.
+func cleanIdents(ids []string) []string {
+	var out []string
+	for _, s := range ids {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // withdatabase returns a dsn with a replaced database name.

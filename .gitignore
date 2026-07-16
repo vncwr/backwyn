@@ -28,3 +28,6 @@ coverage.*
 Thumbs.db
 
 /notes/
+
+/backups/
+/scratch/

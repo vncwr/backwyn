@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/vncwr/backwyn/internal/config"
@@ -29,6 +30,22 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, now tim
 		return nil, err
 	}
 
+	// refuse a dump that RLS would silently truncate: with
+	// --enable-row-security, any table the role cannot fully read exports
+	// only its visible rows and still "succeeds".
+	if cfg.DumpRowSecurity {
+		uncovered, err := pgtools.RLSUncoveredTables(ctx, cfg.SourceDSN, cfg.DumpSchemas)
+		if err != nil {
+			return nil, fmt.Errorf("row security preflight: %w", err)
+		}
+		if len(uncovered) > 0 {
+			return nil, fmt.Errorf(
+				"row security preflight: %d table(s) would dump incomplete under RLS: %s "+
+					"(grant the backup role a read-all policy — see sql/backup_role_rls.sql — or dump with a BYPASSRLS role)",
+				len(uncovered), strings.Join(uncovered, ", "))
+		}
+	}
+
 	id := now.UTC().Format("20060102T150405Z")
 	artifactKey := "artifacts/" + id + ".dump.enc"
 
@@ -45,7 +62,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, now tim
 	tmp.Close()
 	defer os.Remove(tmpPath)
 
-	if err := pgtools.Dump(ctx, cfg.SourceDSN, tmpPath, cfg.DumpSchemas); err != nil {
+	if err := pgtools.Dump(ctx, cfg.SourceDSN, tmpPath, cfg.DumpSchemas, cfg.DumpRowSecurity); err != nil {
 		return nil, err
 	}
 
