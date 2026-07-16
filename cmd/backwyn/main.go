@@ -417,5 +417,7 @@ environment:
   BACKWYN_ALERT_WEBHOOK     optional URL to POST JSON alerts to
   BACKWYN_VERIFY_QUERY      optional SQL run against the restored sandbox; if
                             it errors, verification fails
+  BACKWYN_DUMP_SCHEMAS      optional comma-separated schemas to dump (pg_dump
+                            -n); empty dumps the whole database
   BACKWYN_LISTEN_ADDR       default for run -listen (health checks + metrics)`)
 }

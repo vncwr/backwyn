@@ -54,6 +54,25 @@ BACKWYN_VERIFY_QUERY=SELECT count(*) FROM customers;
 A restore that comes back without your most important table is not a backup,
 even if `pg_restore` exits 0.
 
+### Dump scope
+
+| Variable | Description |
+|---|---|
+| `BACKWYN_DUMP_SCHEMAS` | Comma-separated schemas to dump (`pg_dump -n`). Empty dumps the whole database. |
+
+Useful for Supabase and similar platforms, where a whole-database dump carries
+the platform's own schemas (`auth`, `storage`, ...) and `CREATE EXTENSION`
+entries the verify sandbox may not be able to satisfy:
+
+```
+BACKWYN_DUMP_SCHEMAS=public
+```
+
+**Understand what you exclude.** `BACKWYN_DUMP_SCHEMAS=public` backs up your
+tables but not `auth` — a restored copy will not contain user accounts. The
+alternative is keeping the full dump and running a Supabase-compatible verify
+sandbox instead; see [supabase.md](supabase.md#extensions-and-the-verify-sandbox).
+
 ## Storage
 
 | Variable | Default | Description |

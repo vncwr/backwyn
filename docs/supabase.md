@@ -57,6 +57,31 @@ export BACKWYN_ALERT_WEBHOOK='https://hooks.slack.com/services/...'
 backwyn run -once -max-age 24h
 ```
 
+## Extensions and the verify sandbox
+
+A whole-database dump of a Supabase instance includes the platform itself:
+the `auth`, `storage`, and `realtime` schemas, and `CREATE EXTENSION` entries
+for whatever is installed — some of which (`pg_graphql`, `pgjwt`,
+`supabase_vault`, ...) do not exist in a vanilla `postgres` image. Restoring
+such a dump into a plain sandbox fails on those extensions, and backwyn —
+correctly — refuses to mark the backup verified.
+
+Two ways out; pick one:
+
+1. **Keep the full dump, upgrade the sandbox.** Run the verify sandbox from a
+   `supabase/postgres` image matching your project's major version instead of
+   `postgres:17` (one line in `docker-compose.yml`). Every extension the dump
+   references then exists in the sandbox. Choose this if you want `auth` users
+   and Storage metadata in your backups — usually the right call.
+
+2. **Scope the dump to your own schemas.** `BACKWYN_DUMP_SCHEMAS=public`
+   dumps only your tables. Smaller artifacts, faster verify, vanilla sandbox
+   works — but a restored copy contains no `auth` accounts. Only choose this
+   if you understand exactly what you are excluding.
+
+This applies to self-hosted Supabase too — more so, since a self-hosted dump
+made with the superuser carries everything.
+
 ## Scope note
 
 This performs **scheduled logical dumps** (`pg_dump`) with verification. It is

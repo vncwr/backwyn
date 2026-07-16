@@ -16,6 +16,9 @@
 
 services:
   verify-sandbox:
+    # Supabase source? Use a supabase/postgres image matching your project's
+    # major version instead, so the extensions in your dump exist here.
+    # See docs/supabase.md#extensions-and-the-verify-sandbox.
     image: postgres:17
     environment:
       POSTGRES_PASSWORD: sandbox
@@ -64,6 +67,9 @@ services:
 
       # --- optional SQL probe against the restored sandbox ---
       BACKWYN_VERIFY_QUERY: ${BACKWYN_VERIFY_QUERY:-}
+
+      # --- optional dump scope (see docs/supabase.md before setting) ---
+      BACKWYN_DUMP_SCHEMAS: ${BACKWYN_DUMP_SCHEMAS:-}
 
     # /healthz + /metrics, host-local only
     ports:

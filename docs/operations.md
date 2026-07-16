@@ -133,6 +133,7 @@ artifact. It only bypasses the *policy* of refusing unproven backups.
 | `verification failed: decrypt: ... message authentication failed` | The artifact is corrupt or the key is wrong. Working as designed — this is the catch. |
 | `checksum mismatch` | Artifact decrypts but the plaintext is not what was dumped. |
 | `cannot inspect restore target` | Target database does not exist. `createdb` it first. |
+| `pg_restore failed: ... extension "pg_graphql" is not available` (or similar) | The dump references platform extensions the vanilla sandbox lacks. Use a `supabase/postgres` sandbox image, or scope the dump with `BACKWYN_DUMP_SCHEMAS`. See [supabase.md](supabase.md#extensions-and-the-verify-sandbox). |
 | `refusing to prune: no verified backup exists` | Safety rule. Fix verification before pruning. |
 | `BACKWYN_VERIFY_ADMIN_DSN is required` | `verify`/`restore`/`run` need a sandbox. |
 

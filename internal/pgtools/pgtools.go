@@ -34,15 +34,25 @@ func Version(ctx context.Context, bin string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// dump runs pg_dump in custom format against dsn.
-func Dump(ctx context.Context, dsn, outPath string) error {
-	cmd := exec.CommandContext(ctx, "pg_dump",
+// dumpargs builds the pg_dump argument list. schemas scopes the dump with -n
+// flags; empty means the whole database.
+func DumpArgs(dsn, outPath string, schemas []string) []string {
+	args := []string{
 		"--format=custom",
 		"--no-owner",
 		"--no-privileges",
-		"--file", outPath,
-		"--dbname", dsn,
-	)
+	}
+	for _, s := range schemas {
+		if s = strings.TrimSpace(s); s != "" {
+			args = append(args, "-n", s)
+		}
+	}
+	return append(args, "--file", outPath, "--dbname", dsn)
+}
+
+// dump runs pg_dump in custom format against dsn.
+func Dump(ctx context.Context, dsn, outPath string, schemas []string) error {
+	cmd := exec.CommandContext(ctx, "pg_dump", DumpArgs(dsn, outPath, schemas)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

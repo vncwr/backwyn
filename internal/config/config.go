@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // backend selects where artifacts and manifests are stored.
@@ -41,6 +42,9 @@ type Config struct {
 
 	// optional verify SQL query to execute on restore validation.
 	VerifyQuery string
+
+	// optional schemas to scope pg_dump to; empty dumps the whole database.
+	DumpSchemas []string
 }
 
 // s3config configures s3 storage.
@@ -70,6 +74,7 @@ func Load() (*Config, error) {
 		},
 		AlertWebhook: os.Getenv("BACKWYN_ALERT_WEBHOOK"),
 		VerifyQuery:  os.Getenv("BACKWYN_VERIFY_QUERY"),
+		DumpSchemas:  splitList(os.Getenv("BACKWYN_DUMP_SCHEMAS")),
 	}
 
 	if c.SourceDSN == "" {
@@ -113,4 +118,15 @@ func getDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// splitlist splits a comma-separated value, dropping empty entries.
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

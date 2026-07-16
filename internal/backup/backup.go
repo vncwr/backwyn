@@ -45,7 +45,7 @@ func Run(ctx context.Context, cfg *config.Config, store storage.Backend, now tim
 	tmp.Close()
 	defer os.Remove(tmpPath)
 
-	if err := pgtools.Dump(ctx, cfg.SourceDSN, tmpPath); err != nil {
+	if err := pgtools.Dump(ctx, cfg.SourceDSN, tmpPath, cfg.DumpSchemas); err != nil {
 		return nil, err
 	}
 
